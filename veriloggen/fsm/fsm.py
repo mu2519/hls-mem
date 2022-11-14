@@ -1,7 +1,5 @@
 from __future__ import absolute_import
 from __future__ import print_function
-import os
-import sys
 import collections
 import functools
 
@@ -11,6 +9,9 @@ from veriloggen.core.submodule import Submodule
 from veriloggen.seq.subst_visitor import *
 from veriloggen.seq.reset_visitor import ResetVisitor
 from veriloggen.seq.seq import Seq, make_condition
+
+
+# fsm.py: FSM -> Verilog-like AST
 
 
 _tmp_count = 0
@@ -395,7 +396,7 @@ class FSM(vtypes.VeriloggenNode):
     # -------------------------------------------------------------------------
     def make_always(self, reset=(), body=(), case=True):
         if self.done:
-            #raise ValueError('make_always() has been already called.')
+            # raise ValueError('make_always() has been already called.')
             return
 
         self.done = True
@@ -413,7 +414,7 @@ class FSM(vtypes.VeriloggenNode):
     # -------------------------------------------------------------------------
     def make_module(self, reset=(), body=(), case=True):
         if self.done:
-            #raise ValueError('make_always() has been already called.')
+            # raise ValueError('make_always() has been already called.')
             return
 
         self.done = True
@@ -561,7 +562,7 @@ class FSM(vtypes.VeriloggenNode):
                             a += i * b
 
                 v = out_line[a * width:(a + 1) * width]
-                p = g.Assign(v(s))
+                g.Assign(v(s))
 
                 # inside FSM-module
                 rep_width = (src_rename_visitor.visit(src.width)
@@ -605,7 +606,7 @@ class FSM(vtypes.VeriloggenNode):
                             a += i * b
 
                 v = in_line[a * rep_width:(a + 1) * rep_width]
-                p = g.Assign(ia(v))
+                g.Assign(ia(v))
 
                 src_rename_dict[src.name] = in_array
                 ports[in_line.name] = out_line
@@ -626,7 +627,7 @@ class FSM(vtypes.VeriloggenNode):
 
             rep_width = (src_rename_visitor.visit(dst.width)
                          if dst.width is not None else None)
-            out = m.OutputReg(arg_name, rep_width, signed=dst.get_signed())
+            m.OutputReg(arg_name, rep_width, signed=dst.get_signed())
             out_wire = self.m.TmpWire(rep_width, signed=dst.get_signed(),
                                       prefix='_%s_%s' % (self.name, arg_name))
             self.m.Always()(dst(out_wire, blk=True))
@@ -659,7 +660,7 @@ class FSM(vtypes.VeriloggenNode):
 
         arg_ports.extend([(name, port) for name, port in ports.items()])
 
-        sub = Submodule(self.m, m, 'inst_' + m.name, '_%s_' % self.name,
+        Submodule(self.m, m, 'inst_' + m.name, '_%s_' % self.name,
                         arg_params=arg_params, arg_ports=arg_ports)
 
     # -------------------------------------------------------------------------

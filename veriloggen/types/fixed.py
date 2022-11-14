@@ -154,7 +154,7 @@ def fixed_to_int(value, point):
     return shift_right(value, point, signed)
 
 
-def _fixed_to_int_reg_point(value, point):
+def _fixed_to_int_neg_point(value, point):
     point = -point
 
     if isinstance(value, (int, bool, float)) and isinstance(point, int):

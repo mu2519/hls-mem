@@ -1,7 +1,5 @@
 from __future__ import absolute_import
 from __future__ import print_function
-import os
-import sys
 import collections
 import copy
 import re
@@ -12,6 +10,10 @@ import veriloggen.core.task as task
 import veriloggen.core.rename_visitor as rename_visitor
 
 
+from typing import Any
+from collections.abc import Callable
+
+
 class Module(vtypes.VeriloggenNode):
     """ Verilog Module class """
 
@@ -19,30 +21,33 @@ class Module(vtypes.VeriloggenNode):
 
         vtypes.VeriloggenNode.__init__(self)
 
-        self.name = name if name is not None else self.__class__.__name__
+        self.name: str = name if name is not None else self.__class__.__name__
 
-        self.io_variable = collections.OrderedDict()
-        self.variable = collections.OrderedDict()
-        self.global_constant = collections.OrderedDict()
-        self.local_constant = collections.OrderedDict()
+        self.io_variable: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog ports
+        self.variable: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog variables
+        self.global_constant: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'parameter')
+        self.local_constant: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'localparam')
 
-        self.function = collections.OrderedDict()
-        self.task = collections.OrderedDict()
+        self.function: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog functions
+        self.task: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog tasks
 
-        self.assign = []
-        self.always = []
-        self.initial = []
+        self.assign: list[Any] = []  # the list of Verilog assign statements
+        self.always: list[Any] = []  # the list of Verilog always blocks
+        self.initial: list[Any] = []  # the list of Verilog initial blocks
 
-        self.instance = collections.OrderedDict()
-        self.submodule = collections.OrderedDict()
-        self.generate = collections.OrderedDict()
+        self.instance: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog instances (Verilog module instantiations)
+        self.submodule: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog submodules -> representing module hierarchy via instantiation
+        self.generate: collections.OrderedDict[str | None, Any | list[Any]] = collections.OrderedDict()  # the dictionary of Verilog generate blocks
 
-        self.items = []
+        self.items: list[Any] = []  # the list of all kinds of Verilog constructs
 
-        self.tmp_prefix = tmp_prefix
-        self.tmp_count = 0
-        self.hook = []
-        self.used = False
+        # self.items = self.io_variable.values() + self.variable.values() + self.global_constant.values() + self.local_constant.values() + self.function.values() + self.task.values() + self.assign + self.always + self.initial + self.instance.values() + self.generate.values()
+        # self.submodule is exceptional
+
+        self.tmp_prefix: str = tmp_prefix
+        self.tmp_count: int = 0
+        self.hook: list[tuple[Callable, list | None, dict | None]] = []  # the list of methods with arguments which are called just before Verilog code generation (i.e. veriloggen.verilog.to_verilog)
+        self.used: bool = False  # indicating whether this module has been ever instantiated
 
     # -------------------------------------------------------------------------
     # User interface for variables
@@ -522,7 +527,7 @@ class Module(vtypes.VeriloggenNode):
         return t
 
     # -------------------------------------------------------------------------
-    def GenerateFor(self, pre, cond, post, scope=None):
+    def GenerateFor(self, pre, cond, post, scope: str | None = None):
 
         t = GenerateFor(self, pre, cond, post, scope)
         if scope is None:
@@ -538,7 +543,7 @@ class Module(vtypes.VeriloggenNode):
         self.items.append(t)
         return t
 
-    def GenerateIf(self, cond, scope=None):
+    def GenerateIf(self, cond, scope: str | None = None):
 
         t = GenerateIf(self, cond, scope)
         if scope is None:
@@ -1013,7 +1018,7 @@ class Module(vtypes.VeriloggenNode):
     # -------------------------------------------------------------------------
     # User interface for Verilog code generation
     # -------------------------------------------------------------------------
-    def to_verilog(self, filename=None, for_verilator=False):
+    def to_verilog(self, filename: str | None = None, for_verilator: bool = False) -> str:
         import veriloggen.verilog.to_verilog as to_verilog
         obj = self.to_hook_resolved_obj()
         return to_verilog.write_verilog(obj, filename, for_verilator)
@@ -1031,9 +1036,9 @@ class Module(vtypes.VeriloggenNode):
 
         if isinstance(obj, vtypes.AnyType):
             self.io_variable[obj.name] = obj
-            #self.variable[obj.name] = obj
-            #self.global_constant[obj.name] = obj
-            #self.local_constant[obj.name] = obj
+            # self.variable[obj.name] = obj
+            # self.global_constant[obj.name] = obj
+            # self.local_constant[obj.name] = obj
             return
 
         if isinstance(obj, (vtypes.Input, vtypes.Output, vtypes.Inout)):
@@ -1268,7 +1273,7 @@ class Module(vtypes.VeriloggenNode):
                 return r
         return None
 
-    def get_modules(self):
+    def get_modules(self) -> collections.OrderedDict[str, Any]:
         modules = collections.OrderedDict()
         modules[self.name] = self
         for gen in self.generate.values():
@@ -1298,9 +1303,9 @@ class StubModule(vtypes.VeriloggenNode):
 
     def __init__(self, name=None, code=''):
         vtypes.VeriloggenNode.__init__(self)
-        self.name = name if name is not None else self.__class__.__name__
-        self.code = code
-        self.used = False
+        self.name: str = name if name is not None else self.__class__.__name__
+        self.code: str = code
+        self.used: bool = False  # indicating whether this module has been ever instantiated
 
     def set_code(self, code):
         self.code = code
@@ -1308,7 +1313,7 @@ class StubModule(vtypes.VeriloggenNode):
     def get_code(self):
         return self.code
 
-    def to_verilog(self, filename=None):
+    def to_verilog(self, filename: str | None = None) -> str:
         import veriloggen.verilog.to_verilog as to_verilog
         return to_verilog.write_verilog(self, filename)
 
@@ -1321,7 +1326,7 @@ class StubModule(vtypes.VeriloggenNode):
     def find_module(self, name):
         return None
 
-    def get_modules(self):
+    def get_modules(self) -> collections.OrderedDict[str, Any]:
         modules = collections.OrderedDict()
         modules[self.name] = self
         return modules
@@ -1362,7 +1367,7 @@ class Instance(vtypes.VeriloggenNode):
                     module.global_constant.values(), params)]
 
         if isinstance(module, Module) and not isinstance(module, StubModule):
-            for name, port in self.params:
+            for name, param in self.params:
                 if name is None:
                     continue
                 if not isinstance(module.find_identifier(name), vtypes.Parameter):
@@ -1442,7 +1447,7 @@ class Generate(Module):
             return r
         return None
 
-    def get_modules(self):
+    def get_modules(self) -> collections.OrderedDict[str, Any]:
         modules = collections.OrderedDict()
         for gen in self.generate.values():
             if isinstance(gen, (tuple, list)):

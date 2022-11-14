@@ -2,8 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import copy
-import os
-import sys
+import ast
 from collections import OrderedDict
 
 
@@ -19,12 +18,12 @@ class ScopeName(object):
 class ScopeFrameList(object):
 
     def __init__(self):
-        self.scopeframes = []
+        self.scopeframes: list[ScopeFrame] = []
         self.scopeframes.append(ScopeFrame(ScopeName(('_',))))
-        self.current = self.scopeframes[0]
-        self.previousframes = OrderedDict()
+        self.current: ScopeFrame = self.scopeframes[0]
+        self.previousframes: OrderedDict[ScopeFrame, ScopeFrame | None] = OrderedDict()
         self.previousframes[self.current] = None
-        self.nextframes = OrderedDict()
+        self.nextframes: OrderedDict[ScopeFrame, list[ScopeFrame]] = OrderedDict()
         self.label_prefix = 's'
         self.label_count = 0
         self.binds = OrderedDict()
@@ -63,10 +62,10 @@ class ScopeFrameList(object):
             targ = self.previousframes[targ]
         return None
 
-    def addFunction(self, func):
+    def addFunction(self, func: ast.FunctionDef):
         self.current.addFunction(func)
 
-    def searchVariable(self, name, store=False):
+    def searchVariable(self, name):
         if self.current is None:
             return None
 
@@ -218,7 +217,7 @@ class ScopeFrame(object):
         self.name = name
         self.ftype = ftype
         self.variables = OrderedDict()
-        self.functions = OrderedDict()
+        self.functions: OrderedDict[str, ast.FunctionDef] = OrderedDict()
         self.unresolved_break = []
         self.unresolved_continue = []
         self.unresolved_return = []
@@ -230,7 +229,7 @@ class ScopeFrame(object):
     def addVariable(self, name, var):
         self.variables[name] = var
 
-    def addFunction(self, func):
+    def addFunction(self, func: ast.FunctionDef):
         name = func.name
         self.functions[name] = func
 
@@ -239,7 +238,7 @@ class ScopeFrame(object):
             return None
         return self.variables[name]
 
-    def searchFunction(self, name):
+    def searchFunction(self, name: str):
         if name not in self.functions:
             return None
         return self.functions[name]

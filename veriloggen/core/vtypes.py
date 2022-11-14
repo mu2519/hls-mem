@@ -2,6 +2,10 @@ from __future__ import absolute_import
 from __future__ import print_function
 import re
 
+
+from typing import Any
+
+
 # Object ID counter for object sorting key
 global_object_counter = 0
 
@@ -150,6 +154,7 @@ def get_value(obj):
     if hasattr(obj, 'value'):
         return obj.value
     return None
+
 
 def get_initval(obj):
     if hasattr(obj, 'initval'):
@@ -302,6 +307,45 @@ class VeriloggenNode(object):
     def __rshift__(self, r):
         raise TypeError('Not allowed operation.')
 
+    def __radd__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rsub__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rpow__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rmul__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rdiv__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rtruediv__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rfloordiv__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rmod__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rand__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __ror__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rxor__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rlshift__(self, l):
+        raise TypeError('Not allowed operation.')
+
+    def __rrshift__(self, l):
+        raise TypeError('Not allowed operation.')
+
     def __neg__(self):
         raise TypeError('Not allowed operation.')
 
@@ -382,6 +426,45 @@ class _Numeric(VeriloggenNode):
 
     def __rshift__(self, r):
         return Srl(self, r)
+
+    def __radd__(self, l):
+        return Plus(l, self)
+
+    def __rsub__(self, l):
+        return Minus(l, self)
+
+    def __rpow__(self, l):
+        return Power(l, self)
+
+    def __rmul__(self, l):
+        return Times(l, self)
+
+    def __rdiv__(self, l):
+        return Divide(l, self)
+
+    def __rtruediv__(self, l):
+        return Divide(l, self)
+
+    def __rfloordiv__(self, l):
+        return Divide(l, self)
+
+    def __rmod__(self, l):
+        return Mod(l, self)
+
+    def __rand__(self, l):
+        return And(l, self)
+
+    def __ror__(self, l):
+        return Or(l, self)
+
+    def __rxor__(self, l):
+        return Xor(l, self)
+
+    def __rlshift__(self, l):
+        return Sll(l, self)
+
+    def __rrshift__(self, l):
+        return Srl(l, self)
 
     def __neg__(self):
         return Uminus(self)
@@ -518,8 +601,8 @@ class _Variable(_Numeric):
         else:
             self.raw_dims = None
 
-        self.module = module
-        self.subst = []
+        self.module = module  # the module within which this variable is declared
+        self.subst: list[Subst] = []  # the list of substitutions whose LHS is this variable
         self.assign_value = None
 
     @property
@@ -802,7 +885,7 @@ class Int(_Constant):
                     raise ValueError(
                         "Illegal base number %d for Int." % self.base)
             self.width = str_to_width(value) if width is None else width
-            self.signed = str_to_signed(value) if signed == False else signed
+            self.signed = str_to_signed(value) if signed is False else signed
 
     def _type_check_value(self, value):
         if not isinstance(value, (int, str)):
@@ -1841,9 +1924,9 @@ def Sign(var):
 
 class Sensitive(VeriloggenNode):
 
-    def __init__(self, name):
+    def __init__(self, name: Any):
         VeriloggenNode.__init__(self)
-        self.name = name
+        self.name = name  # self.name is not necessarily a str object -> bad naming!
 
 
 class Posedge(Sensitive):
@@ -1881,7 +1964,7 @@ class Subst(VeriloggenNode):
     def _type_check_right(self, right):
         if not isinstance(right, (VeriloggenNode, int, float, bool, str)):
             raise TypeError(
-                "right must be VeriloggenNode, not '%s'" % str(type(right)))
+                "right must be VeriloggenNode, int, flaot, bool, or str, not '%s'" % str(type(right)))
 
     def overwrite_right(self, right):
         self.right = right
@@ -2142,7 +2225,7 @@ def PatternMux(*patterns):
     if len(patterns) == 1 and isinstance(patterns, (tuple, list)):
         patterns = patterns[0]
 
-    for i, (cond, stmt) in enumerate(reversed(patterns)):
+    for cond, stmt in reversed(patterns):
         if prev is None and cond is not None:
             raise ValueError('Last pattern requires a None condition.')
         if prev is not None and cond is None:

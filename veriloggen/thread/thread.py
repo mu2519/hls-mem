@@ -140,7 +140,7 @@ class Thread(vtypes.VeriloggenNode):
         return 0
 
     def done(self, fsm):
-        """ check whethe the thread is running """
+        """ check whether the thread is running """
 
         if self.end_state is None:
             raise ValueError('not started')
@@ -174,7 +174,7 @@ class Thread(vtypes.VeriloggenNode):
 
         return self.return_value
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def add_function(self, func):
         name = func.__name__
         if name in self.function_lib:
@@ -228,14 +228,18 @@ class Thread(vtypes.VeriloggenNode):
                                            datawidth=self.datawidth, point=self.point)
 
         text = textwrap.dedent(inspect.getsource(self.targ))
-        tree = ast.parse(text).body[0]
+        tree: ast.FunctionDef = ast.parse(text).body[0]
+
+        if tree.args.posonlyargs:
+            raise NotImplementedError('positional-only parameters are not supported.')
+        if tree.args.kwonlyargs:
+            raise NotImplementedError('keyword-only parameters are not supported.')
 
         # stack a new scope frame
         cvisitor.pushScope(ftype='call')
 
         # args -> scope variable (pass by reference)
         args_code = []
-        rest_args = []
         for pos, arg in enumerate(args):
             baseobj = tree.args.args[pos]
             argname = (baseobj.id
@@ -253,10 +257,10 @@ class Thread(vtypes.VeriloggenNode):
         # call AST
         args_text = ', '.join(args_code + kwargs_code)
         call_code = ''.join([self.targ.__name__, '(', args_text, ')'])
-        _call_ast = ast.parse(call_code)
+        _call_ast: ast.Call = ast.parse(call_code).body[0].value
 
         # start visit
-        self.return_value = cvisitor.visit(_call_ast.body[0].value)
+        self.return_value = cvisitor.visit(_call_ast)
 
         # clean-up jump conditions
         cvisitor.clearBreak()
@@ -360,23 +364,23 @@ class Thread(vtypes.VeriloggenNode):
             raise ValueError(
                 'variable length argument is not supported in dynamic thread execution')
 
-            #num_vararg_vars = len(args) - len(tree.args.args)
+            # num_vararg_vars = len(args) - len(tree.args.args)
             # if num_vararg_vars > len(self.vararg_regs):
-            #    for i in range(num_vararg_vars - len(self.vararg_regs)):
-            #        name = compiler._tmp_name('_'.join(['', self.name, varargname]))
-            #        v = self.m.Reg(name, self.datawidth, initval=0, signed=True)
-            #        self.vararg_regs.append(v)
-            #        args_code.append(varargname)
+            #     for i in range(num_vararg_vars - len(self.vararg_regs)):
+            #         name = compiler._tmp_name('_'.join(['', self.name, varargname]))
+            #         v = self.m.Reg(name, self.datawidth, initval=0, signed=True)
+            #         self.vararg_regs.append(v)
+            #         args_code.append(varargname)
             # for i, arg in enumerate(args[-num_vararg_vars:]):
-            #    if not isinstance(arg, vtypes.numerical_types):
-            #        raise TypeError('variable length argument support no non-numeric values')
-            #    v = self.vararg_regs[i]
-            #    # binding
-            #    if cond is not None:
-            #        self.fsm.If(cond)
-            #    self.fsm.If(start_flag)(
-            #        v(arg)
-            #    )
+            #     if not isinstance(arg, vtypes.numerical_types):
+            #         raise TypeError('variable length argument support no non-numeric values')
+            #     v = self.vararg_regs[i]
+            #     # binding
+            #     if cond is not None:
+            #         self.fsm.If(cond)
+            #     self.fsm.If(start_flag)(
+            #         v(arg)
+            #     )
 
         # kwargs
         kwargs_code = []

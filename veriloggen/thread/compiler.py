@@ -1,8 +1,6 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-import os
-import sys
 import ast
 import inspect
 import textwrap
@@ -11,13 +9,16 @@ from collections import OrderedDict
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
 from veriloggen.optimizer import try_optimize as optimize
-from .scope import ScopeName, ScopeFrameList, ScopeFrame
+from .scope import ScopeFrameList
 from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
 
 numerical_types = vtypes.numerical_types
 
 _tmp_count = 0
+
+
+# compiler.py: Python AST -> FSM
 
 
 def _tmp_name(prefix='_tmp_thread'):
@@ -46,20 +47,21 @@ class CompileError(Exception):
 class FunctionVisitor(ast.NodeVisitor):
 
     def __init__(self):
-        self.functions = OrderedDict()
+        self.functions: OrderedDict[str, ast.FunctionDef] = OrderedDict()
 
     def visit(self, node):
         try:
-            r = ast.NodeVisitor.visit(self, node)
+            r = super().visit(node)
             return r
 
-        except CompileError as e:
+        except CompileError:
             raise
 
         except Exception as e:
-            if hasattr(ast, 'unparse'):
+            # ast.unparse was added in Python 3.9
+            if hasattr(ast, 'unparse'):  # Python 3.9 or later
                 code = ast.unparse(node)
-            else:
+            else:  # Python 3.8 or earlier
                 code = ast.dump(node)
             raise CompileError(e, code, node.lineno, node.col_offset,
                                node.end_lineno, node.end_col_offset)
@@ -74,7 +76,7 @@ class FunctionVisitor(ast.NodeVisitor):
 class CompileVisitor(ast.NodeVisitor):
 
     def __init__(self, m, name, clk, rst, fsm,
-                 functions, intrinsic_functions,
+                 functions: OrderedDict[str, ast.FunctionDef], intrinsic_functions,
                  intrinsic_methods,
                  start_frame,
                  datawidth=32, point=16):
@@ -85,7 +87,6 @@ class CompileVisitor(ast.NodeVisitor):
         self.rst = rst
         self.fsm = fsm
 
-        self.functions = functions
         self.intrinsic_functions = intrinsic_functions
         self.intrinsic_methods = intrinsic_methods
 
@@ -102,16 +103,17 @@ class CompileVisitor(ast.NodeVisitor):
     # -------------------------------------------------------------------------
     def visit(self, node):
         try:
-            r = ast.NodeVisitor.visit(self, node)
+            r = super().visit(node)
             return r
 
-        except CompileError as e:
+        except CompileError:
             raise
 
         except Exception as e:
-            if hasattr(ast, 'unparse'):
+            # ast.unparse was added in Python 3.9
+            if hasattr(ast, 'unparse'):  # Python 3.9 or later
                 code = ast.unparse(node)
-            else:
+            else:  # Python 3.8 or earlier
                 code = ast.dump(node)
             raise CompileError(e, code, node.lineno, node.col_offset,
                                node.end_lineno, node.end_col_offset)
@@ -258,6 +260,9 @@ class CompileVisitor(ast.NodeVisitor):
         if self.skip():
             return
 
+        if len(node.orelse) > 0:
+            raise NotImplementedError('while-else statement is not supported.')
+
         # loop condition
         test = self.visit(node.test)
 
@@ -295,6 +300,12 @@ class CompileVisitor(ast.NodeVisitor):
     def visit_For(self, node):
         if self.skip():
             return
+
+        if not isinstance(node.target, ast.Name):
+            raise NotImplementedError('unpacking in for statement is not supported.')
+
+        if len(node.orelse) > 0:
+            raise NotImplementedError('for-else statement is not supported.')
 
         if (isinstance(node.iter, ast.Call) and
             isinstance(node.iter.func, ast.Name) and
@@ -794,23 +805,16 @@ class CompileVisitor(ast.NodeVisitor):
         return left
 
     def visit_Constant(self, node):
+        if node.value is None:
+            return 0
         if isinstance(node.value, int):
             return node.value
         if isinstance(node.value, float):
             v = FixedConst(None, node.value, self.point)
             v.orig_value = node.value
             return v
-
         if isinstance(node.value, str):
             return vtypes.Str(node.value)
-
-        if node.value == True:
-            return vtypes.Int(1)
-        if node.value == False:
-            return vtypes.Int(0)
-        if node.value == None:
-            return vtypes.Int(0)
-
         raise TypeError("%s in Const.value is not supported." %
                         str(node.value))
 
@@ -852,9 +856,6 @@ class CompileVisitor(ast.NodeVisitor):
 
         except NotImplementedError:
             op = getVeriloggenOp(node.op)
-            if op is None:
-                raise TypeError("unsupported BinOp: %s" % str(node.op))
-
             rslt = values[0]
             for v in values[1:]:
                 rslt = op(rslt, v)
@@ -867,7 +868,7 @@ class CompileVisitor(ast.NodeVisitor):
 
         if isinstance(left, vtypes.Str) or isinstance(right, vtypes.Str):
             if not isinstance(node.op, ast.Add):
-                raise TypeError("Can not generate a corresponding node")
+                raise TypeError("Cannot generate a corresponding node")
             return self._string_operation_plus(left, right)
 
         if (not isinstance(left, fxd._FixedBase) and
@@ -935,25 +936,16 @@ class CompileVisitor(ast.NodeVisitor):
 
     def visit_NameConstant(self, node):
         # deprecated, merged to visit_Constant
-        if node.value == True:
+        if node.value is True:
             return vtypes.Int(1)
-        if node.value == False:
+        if node.value is False:
             return vtypes.Int(0)
-        if node.value == None:
+        if node.value is None:
             return vtypes.Int(0)
         raise TypeError("%s in NameConst.value is not supported." %
                         str(node.value))
 
     def visit_Name(self, node):
-        # Checking True, False, and None here for python 3.3 or older.
-        # See visit_Constant and visit_NameConstant for newer versions.
-        if node.id == 'True':
-            return vtypes.Int(1)
-        if node.id == 'False':
-            return vtypes.Int(0)
-        if node.id == 'None':
-            return vtypes.Int(0)
-
         store = isinstance(node.ctx, ast.Store)
         if store:
             return node.id
@@ -1105,7 +1097,7 @@ class CompileVisitor(ast.NodeVisitor):
         if isinstance(name, vtypes._Numeric):
             return name
 
-        var = self.scope.searchVariable(name, store)
+        var = self.scope.searchVariable(name)
         if var is None:
             if not store:
                 local_objects = self.start_frame.f_locals

@@ -1,7 +1,5 @@
 from __future__ import absolute_import
 from __future__ import print_function
-import sys
-import os
 
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
@@ -15,7 +13,6 @@ def try_optimize(node, width=32):
         return optimize(node, width)
     except:
         return node
-    return node
 
 
 def optimize(node, width=32):
