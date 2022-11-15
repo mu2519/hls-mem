@@ -1,11 +1,16 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+
+from functools import reduce
+import copy
 import ast
 import inspect
 import textwrap
 from collections import OrderedDict
+from typing import Any
 
+from veriloggen.fsm.fsm import FSM
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
 from veriloggen.optimizer import try_optimize as optimize
@@ -19,6 +24,243 @@ _tmp_count = 0
 
 
 # compiler.py: Python AST -> FSM
+
+
+# def get_use_expr(expr: ast.expr) -> set[ast.expr]:
+#     if isinstance(expr, ast.BoolOp):
+#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.values))
+#     if isinstance(expr, ast.BinOp):
+#         return get_use_expr(expr.left) | get_use_expr(expr.right)
+#     if isinstance(expr, ast.UnaryOp):
+#         return get_use_expr(expr.operand)
+#     if isinstance(expr, ast.IfExp):
+#         return get_use_expr(expr.test) | get_use_expr(expr.body) | get_use_expr(expr.orelse)
+#     if isinstance(expr, ast.Compare):
+#         return get_use_expr(expr.left) | reduce(lambda x, y: x | y, map(get_use_expr, expr.comparators))
+#     if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.elts))
+#     if isinstance(expr, ast.Dict):
+#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.keys)) | reduce(lambda x, y: x | y, map(get_use_expr, expr.values))
+#     if isinstance(expr, ast.Subscript):
+#         return get_use_expr(expr.value) | get_use_expr(expr.slice)
+#     if isinstance(expr, ast.Slice):
+#         return (get_use_expr(expr.lower) if expr.lower is not None else set()) | (get_use_expr(expr.upper) if expr.upper is not None else set()) | (get_use_expr(expr.step) if expr.step is not None else set())
+#     if isinstance(expr, ast.Attribute):
+#         return {expr}
+#     if isinstance(expr, ast.Name):
+#         return {expr}
+#     if isinstance(expr, ast.Constant):
+#         return set()
+#     raise TypeError(f'unexpected type {type(expr)}')
+
+
+# registered_func_list = ['cache_func', 'cc.func']
+
+
+# def get_essential_expr(expr: ast.expr) -> set:
+#     if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.elts))
+#     if isinstance(expr, ast.Dict):
+#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.keys + expr.values))
+#     if isinstance(expr, ast.BoolOp):
+#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.values))
+#     if isinstance(expr, ast.BinOp):
+#         return get_essential_expr(expr.left) | get_essential_expr(expr.right)
+#     if isinstance(expr, ast.UnaryOp):
+#         return get_essential_expr(expr.operand)
+#     if isinstance(expr, ast.IfExp):
+#         return get_essential_expr(expr.test) | get_essential_expr(expr.body) | get_essential_expr(expr.orelse)
+#     if isinstance(expr, ast.Compare):
+#         return reduce(lambda x, y: x | y, map(get_essential_expr, [expr.left] + expr.comparators))
+#     if isinstance(expr, ast.Subscript):
+#         return get_essential_expr(expr.value) | get_essential_expr(expr.slice)
+#     if isinstance(expr, ast.Slice):
+#         return reduce(lambda x, y: x | y, map(lambda e: get_essential_expr(e) if e is not None else set(), [expr.lower, expr.upper, expr.step]))
+#     if isinstance(expr, ast.Attribute):
+#         return get_essential_expr(expr.value)
+#     if isinstance(expr, (ast.Name, ast.Constant)):
+#         return set()
+#     if isinstance(expr, ast.Call):  # main logic
+#         if isinstance(expr.func, ast.Name):
+#             name = expr.func.id
+#         elif isinstance(expr.func, ast.Attribute):
+#             if isinstance(expr.func.value, ast.Name):
+#                 name = expr.func.value.id + '.' + expr.func.attr
+#             else:
+#                 raise NotImplementedError('complicated function calls are not supported')
+#         else:
+#             raise NotImplementedError('complicated function calls are not supported')
+#         if name in registered_func_list:
+#             return reduce(lambda x, y: x | y, [get_use_expr(e) for e in expr.args] + [get_use_expr(kw.value) for kw in expr.keywords])
+#         else:
+#             return reduce(lambda x, y: x | y, [get_essential_expr(e) for e in expr.args] + [get_essential_expr(kw.value) for kw in expr.keywords])
+#     raise TypeError(f'unexpected type {type(expr)}')
+
+
+# def get_essential_stmt(stmt: ast.stmt, var_set: set):
+#     if isinstance(stmt, ast.Assign):
+#         pass
+#     if isinstance(stmt, ast.AugAssign):
+#         target_name = stmt.target
+#     if isinstance(stmt, ast.Expr):
+#         return var_set + get_essential_expr(stmt.value)
+
+
+# def analyze(orig_stmts: list[ast.stmt], out_vars: set) -> tuple(list[ast.stmt], set):
+#     conv_stmts = []
+#     in_vars = out_vars
+#     for s in reversed(orig_stmts):
+#         if isinstance(s, ast.If):
+#             true_stmts, true_vars = analyze(s.body, in_vars)
+#             false_stmts, false_vars = analyze(s.orelse, in_vars)
+#             if true_stmts | false_stmts:
+#                 conv_stmts.append(ast.If(test=s.test, body=true_stmts, orelse=false_stmts))
+#             in_vars = true_vars | false_vars
+#         elif isinstance(s, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
+#             pass
+#         else:
+#             TypeError(f'unexpected type {type(s)}')
+#     return reversed(conv_stmts), in_vars
+
+
+# def analyze_wrapper(stmts: list[ast.stmts]) -> list[ast.stmts]:
+#     # stub
+#     ret = []
+#     for s in stmts:
+#         if isinstance(s, (ast.Assign, ast.AugAssign)):
+#             ret.append(s)
+#         elif isinstance(s, ast.If):
+#             ret.append(ast.If(test=s.test, body=analyze_wrapper(s.body), orelse=analyze_wrapper(s.orelse)))
+#         elif isinstance(s, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
+#             pass
+#         else:
+#             TypeError(f'unexpected type {type(s)}')
+#     return ret
+
+
+memory_access_func: list[str] = []
+memory_access_method: list[str] = ["dma_read", "dma_write"]
+
+
+def find_memory_access_sub(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            if node.func.id in memory_access_func:
+                return True
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr in memory_access_method:
+                return True
+        else:
+            raise NotImplementedError(f'unsupported callable type {type(node.func)}')
+    for n in ast.iter_child_nodes(node):
+        if find_memory_access_sub(n):
+            return True
+    return False
+
+
+# judge whether memory accesses are performed
+def find_memory_access(stmts: list[ast.stmt]) -> bool:
+    for s in stmts:
+        if find_memory_access_sub(s):
+            return True
+    return False
+
+
+def filter_loop_sub(stmt: ast.stmt) -> ast.stmt | None:
+    if isinstance(stmt, ast.If):
+        if filter_loop(stmt.body) or filter_loop(stmt.orelse):
+            return ast.If(test=stmt.test, body=filter_loop(stmt.body), orelse=filter_loop(stmt.orelse))
+        else:
+            return ast.Expr(stmt.test)
+    if isinstance(stmt, (ast.Assign, ast.AugAssign, ast.Expr)):
+        return stmt
+    if isinstance(stmt, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
+        return None
+    raise TypeError(f'unexpected statement type {type(stmt)}')
+
+
+# remove loops and breaks: for, while, return, break, continue, pass
+def filter_loop(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    return list(filter(lambda x: x is not None, map(filter_loop_sub, stmts)))
+
+
+def union(x: set, y: set) -> set:
+    return x | y
+
+
+# TODO: consider modification via function calls
+def get_modified_vars_sub(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Assign):  # incomplete implementation
+        def rec(expr: ast.expr) -> set[str]:
+            if isinstance(expr, (ast.List, ast.Tuple)):
+                return reduce(union, map(rec, expr.elts), set())
+            elif isinstance(expr, ast.Name):
+                return {expr.id}
+            else:
+                raise NotImplementedError
+        return reduce(union, map(rec, node.targets), set())
+    if isinstance(node, ast.AugAssign):  # incomplete implementation
+        if isinstance(node.target, ast.Name):
+            return {node.target.id}
+        else:
+            raise NotImplementedError
+    return reduce(union, map(get_modified_vars_sub, ast.iter_child_nodes(node)), set())
+
+
+# obtain modified variables
+def get_modified_vars(stmts: list[ast.stmt]) -> set[str]:
+    return reduce(union, map(get_modified_vars_sub, stmts), set())
+
+
+def rename_vars_sub(node: ast.AST, vars: set[str], suffix: str) -> None:
+    if isinstance(node, ast.Name):
+        if node.id in vars:
+            node.id = '_'.join([node.id, suffix])
+    for n in ast.iter_child_nodes(node):
+        rename_vars_sub(n, vars, suffix)
+
+
+# rename the specified variables by appending '_'
+def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: str = '') -> list[ast.stmt]:
+    ret = []
+    for stmt in stmts:
+        copied_stmt = copy.deepcopy(stmt)
+        rename_vars_sub(copied_stmt, vars, suffix)
+        ret.append(copied_stmt)
+    return ret
+
+
+def temporary_sub(node: ast.AST) -> None:
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            pass
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr == 'dma_read':
+                if node.keywords:
+                    raise RuntimeError
+                if len(node.args) < 4:
+                    raise RuntimeError
+                node.func = ast.Name(id='print', ctx=ast.Load())
+                node.args = [node.args[2]]
+            elif node.func.attr in ['read', 'write', 'dma_write']:
+                if node.keywords:
+                    raise RuntimeError
+                node.func = ast.Name(id='print', ctx=ast.Load())
+                node.args = []
+        else:
+            raise NotImplementedError
+    else:
+        for n in ast.iter_child_nodes(node):
+            temporary_sub(n)
+
+
+def temporary(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    ret = []
+    for stmt in stmts:
+        copied_stmt = copy.deepcopy(stmt)
+        temporary_sub(copied_stmt)
+        ret.append(copied_stmt)
+    return ret
 
 
 def _tmp_name(prefix='_tmp_thread'):
@@ -75,17 +317,20 @@ class FunctionVisitor(ast.NodeVisitor):
 
 class CompileVisitor(ast.NodeVisitor):
 
-    def __init__(self, m, name, clk, rst, fsm,
+    def __init__(self, m, name: str, clk, rst, fsm,
                  functions: OrderedDict[str, ast.FunctionDef], intrinsic_functions,
                  intrinsic_methods,
                  start_frame,
                  datawidth=32, point=16):
 
         self.m = m
-        self.name = name
+        self.name: str = name
         self.clk = clk
         self.rst = rst
-        self.fsm = fsm
+        self.main_fsm = fsm
+        self.prefetch_fsm = None
+        self.fsm = self.main_fsm
+        self.prefetch_count = 0
 
         self.intrinsic_functions = intrinsic_functions
         self.intrinsic_methods = intrinsic_methods
@@ -154,7 +399,7 @@ class CompileVisitor(ast.NodeVisitor):
             return ret
         if isinstance(right, numerical_types):
             return None
-        raise TypeError('unsupported type')
+        raise TypeError(f'unsupported type {type(right)}')
 
     def _assign(self, left, right):
         dsts = left if isinstance(left, (tuple, list)) else (left,)
@@ -297,14 +542,14 @@ class CompileVisitor(ast.NodeVisitor):
 
         self.setFsmLoop(begin_count, body_end_count)
 
-    def visit_For(self, node):
+    def visit_For(self, node: ast.For):
         if self.skip():
             return
 
         if not isinstance(node.target, ast.Name):
             raise NotImplementedError('unpacking in for statement is not supported.')
 
-        if len(node.orelse) > 0:
+        if node.orelse:
             raise NotImplementedError('for-else statement is not supported.')
 
         if (isinstance(node.iter, ast.Call) and
@@ -317,7 +562,7 @@ class CompileVisitor(ast.NodeVisitor):
 
         raise TypeError('unsupported for-statement style')
 
-    def _for_range(self, node):
+    def _for_range(self, node: ast.For):
         if len(node.iter.args) == 0:
             raise ValueError('not enough arguments')
 
@@ -347,10 +592,91 @@ class CompileVisitor(ast.NodeVisitor):
                                    iter_node, cond_node, update_node, node_body)
 
     def _for_range_fsm(self, begin_node, end_node, step_node,
-                       iter_node, cond_node, update_node, node_body,
-                       target_update=None):
+                       iter_node, cond_node, update_node, body: list[ast.stmt],
+                       target_update: tuple[Any, Any] | None = None):
+
+        flag = self.getTmpVariable()
+
+        filtered_body = filter_loop(body)
+        if find_memory_access(filtered_body):
+            def isbound(var: str) -> bool:
+                try:
+                    self.getVariable(var)
+                except NameError:
+                    return False
+                return True
+            modified_vars = get_modified_vars(body)
+            renamed_body = rename_vars(filtered_body, modified_vars, str(self.prefetch_count))
+            renamed_body = temporary(renamed_body)
+            if len(list(filter(isbound, modified_vars))) > 1:
+                initialization = ast.Assign(
+                    targets=[ast.Tuple(
+                        elts=[ast.Name(id=v + '_' + str(self.prefetch_count), ctx=ast.Store()) for v in modified_vars if isbound(v)],
+                        ctx=ast.Store())],
+                    value=ast.Tuple(
+                        elts=[ast.Name(id=v, ctx=ast.Load()) for v in modified_vars if isbound(v)],
+                        ctx=ast.Load()))
+            elif len(list(filter(isbound, modified_vars))) > 0:
+                initialization = ast.Assign(
+                    targets=[ast.Name(id=v + '_' + str(self.prefetch_count), ctx=ast.Store()) for v in modified_vars if isbound(v)],
+                    value=[ast.Name(id=v, ctx=ast.Load()) for v in modified_vars if isbound(v)][0])
+            else:
+                initialization = ast.Pass()
+
+            prefetch_iter_node = self.getTmpVariable()
+
+            # change from main FSM to prefetch FSM
+            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
+            self.prefetch_count += 1
+            self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
+            self.fsm = self.prefetch_fsm
+
+            self.pushScope()
+
+            # initialize
+            prefetch_idle_count = self.getFsmCount()
+            self.incFsmCount()
+            prefetch_active_count = self.getFsmCount()
+            self.visit(initialization)
+            self.setBind(prefetch_iter_node, begin_node)
+            self.setFsm()
+            self.incFsmCount()
+
+            # condition check
+            prefetch_check_count = self.getFsmCount()
+            self.incFsmCount()
+            prefetch_body_begin_count = self.getFsmCount()
+
+            # body
+            for b in renamed_body:
+                self.visit(b)
+
+            self.popScope()
+
+            prefetch_body_end_count = self.getFsmCount()
+
+            # update
+            self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
+            self.incFsmCount()
+            prefetch_loop_exit_count = self.getFsmCount()
+
+            self.setFsm(prefetch_body_end_count, prefetch_check_count)
+            self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
+
+            self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
+            self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+
+            # change from prefetch FSM to main FSM
+            self.fsm = self.main_fsm
 
         self.pushScope()
+
+        self.setBind(flag, vtypes.Int(1))
+        self.setFsm()
+        self.incFsmCount()
+        self.setBind(flag, vtypes.Int(0))
+        self.setFsm()
+        self.incFsmCount()
 
         # initialize
         self.setBind(iter_node, begin_node)
@@ -370,7 +696,7 @@ class CompileVisitor(ast.NodeVisitor):
             self.setFsm()
             self.incFsmCount()
 
-        for b in node_body:
+        for b in body:
             self.visit(b)
 
         self.popScope()
@@ -399,7 +725,7 @@ class CompileVisitor(ast.NodeVisitor):
 
         self.setFsmLoop(check_count, body_end_count, iter_node, step_node)
 
-    def _for_list(self, node):
+    def _for_list(self, node: ast.For):
         target_name = self.visit(node.target)
         target = self.getVariable(target_name, store=True)
         iterobj = self.visit(node.iter)
@@ -1069,11 +1395,13 @@ class CompileVisitor(ast.NodeVisitor):
         val = self.hasBreak() or self.hasContinue() or self.hasReturn()
         return val
 
-    def makeVariable(self, name, _type=None):
+    def makeVariable(self, name, width=None, _type=None):
         if _type is None:
-            return self.makeVariableReg(name)
+            return self.makeVariableReg(name, width=width)
 
         if _type['type'] == 'fixed':
+            if width is not None:
+                raise ValueError('conflicting specification of width')
             width = _type['width']
             point = _type['point']
             signed = _type['signed']
@@ -1093,7 +1421,7 @@ class CompileVisitor(ast.NodeVisitor):
             width = self.datawidth
         return fxd.FixedReg(self.m, signame, width=width, point=point, signed=signed)
 
-    def getVariable(self, name, store=False, _type=None):
+    def getVariable(self, name, width=None, store=False, _type=None):
         if isinstance(name, vtypes._Numeric):
             return name
 
@@ -1107,14 +1435,14 @@ class CompileVisitor(ast.NodeVisitor):
                 if glb is not None:
                     return glb
                 raise NameError("name '%s' is not defined" % name)
-            var = self.makeVariable(name, _type=_type)
+            var = self.makeVariable(name, width=width, _type=_type)
             self.scope.addVariable(name, var)
             var = self.scope.searchVariable(name)
         return var
 
-    def getTmpVariable(self, _type=None):
+    def getTmpVariable(self, width=None, _type=None):
         name = _tmp_name('tmp')
-        var = self.getVariable(name, store=True, _type=_type)
+        var = self.getVariable(name, width=width, store=True, _type=_type)
         return var
 
     def getGlobalObject(self, name):

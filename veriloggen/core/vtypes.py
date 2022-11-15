@@ -1067,7 +1067,7 @@ class _UnaryOperator(_Operator):
     def _type_check(self, right):
         if not isinstance(right, (_Numeric, bool, int, float, str)):
             raise TypeError(
-                'BinaryOperator does not support Type %s' % str(type(right)))
+                'UnaryOperator does not support Type %s' % str(type(right)))
 
     def _get_module(self):
         if hasattr(self.right, '_get_module'):
