@@ -1,5 +1,4 @@
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import annotations
 
 import copy
 import ast
@@ -15,114 +14,6 @@ class ScopeName(object):
 
     def __repr__(self):
         return '_'.join(self.namelist)
-
-
-class ScopeFrame(object):
-
-    def __init__(self, name: ScopeName, ftype: str | None = None):
-        self.name = name
-        self.ftype = ftype
-        self.variables: OrderedDict[str, Any] = OrderedDict()
-        self.functions: OrderedDict[str, ast.FunctionDef] = OrderedDict()
-        self.unresolved_break: list[int] = []
-        self.unresolved_continue: list[int] = []
-        self.unresolved_return: list[tuple[int, Any]] = []
-        self.returnvariable = None
-
-    def getNamePrefix(self):
-        return str(self.name)
-
-    def addVariable(self, name: str, var: Any):
-        self.variables[name] = var
-
-    def addFunction(self, func: ast.FunctionDef):
-        name = func.name
-        self.functions[name] = func
-
-    def searchVariable(self, name: str):
-        if name not in self.variables:
-            return None
-        return self.variables[name]
-
-    def searchFunction(self, name: str):
-        if name not in self.functions:
-            return None
-        return self.functions[name]
-
-    # getter to all-inclusive information
-    def getVariables(self):
-        return tuple(self.variables)
-
-    def getFunctions(self):
-        return self.functions
-
-    def addBreak(self, count: int):
-        self.unresolved_break.append(count)
-
-    def addContinue(self, count: int):
-        self.unresolved_continue.append(count)
-
-    def addReturn(self, count: int, value: Any):
-        self.unresolved_return.append((count, value))
-
-    def hasBreak(self):
-        if self.unresolved_break:
-            return True
-        return False
-
-    def hasContinue(self):
-        if self.unresolved_continue:
-            return True
-        return False
-
-    def hasReturn(self):
-        if self.unresolved_return:
-            return True
-        return False
-
-    def getBreak(self):
-        return self.unresolved_break
-
-    def getContinue(self):
-        return self.unresolved_continue
-
-    def getReturn(self):
-        return self.unresolved_return
-
-    def clearBreak(self):
-        self.unresolved_break = []
-
-    def clearContinue(self):
-        self.unresolved_continue = []
-
-    def clearReturn(self):
-        self.unresolved_return = []
-
-    def clearReturnVariable(self):
-        self.returnvariable = None
-
-    def setReturnVariable(self, var):
-        self.returnvariable = var
-
-    def getReturnVariable(self):
-        return self.returnvariable
-
-    def __hash__(self):
-        return hash((self.name, self.ftype, id(self)))
-
-    def __eq__(self, other):
-        if type(self) != type(other):
-            return False
-        if self.name != other.name:
-            return False
-        if self.ftype != other.ftype:
-            return False
-        if id(self) != id(other):
-            return False
-        return True
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
 
 
 class ScopeFrameList(object):
@@ -319,3 +210,111 @@ class ScopeFrameList(object):
             return
         for f in self.nextframes[ptr]:
             self.clearReturnVariable(f)
+
+
+class ScopeFrame(object):
+
+    def __init__(self, name: ScopeName, ftype: str | None = None):
+        self.name = name
+        self.ftype = ftype
+        self.variables: OrderedDict[str, Any] = OrderedDict()
+        self.functions: OrderedDict[str, ast.FunctionDef] = OrderedDict()
+        self.unresolved_break: list[int] = []
+        self.unresolved_continue: list[int] = []
+        self.unresolved_return: list[tuple[int, Any]] = []
+        self.returnvariable = None
+
+    def getNamePrefix(self):
+        return str(self.name)
+
+    def addVariable(self, name: str, var: Any):
+        self.variables[name] = var
+
+    def addFunction(self, func: ast.FunctionDef):
+        name = func.name
+        self.functions[name] = func
+
+    def searchVariable(self, name: str):
+        if name not in self.variables:
+            return None
+        return self.variables[name]
+
+    def searchFunction(self, name: str):
+        if name not in self.functions:
+            return None
+        return self.functions[name]
+
+    # getter to all-inclusive information
+    def getVariables(self):
+        return tuple(self.variables)
+
+    def getFunctions(self):
+        return self.functions
+
+    def addBreak(self, count: int):
+        self.unresolved_break.append(count)
+
+    def addContinue(self, count: int):
+        self.unresolved_continue.append(count)
+
+    def addReturn(self, count: int, value: Any):
+        self.unresolved_return.append((count, value))
+
+    def hasBreak(self):
+        if self.unresolved_break:
+            return True
+        return False
+
+    def hasContinue(self):
+        if self.unresolved_continue:
+            return True
+        return False
+
+    def hasReturn(self):
+        if self.unresolved_return:
+            return True
+        return False
+
+    def getBreak(self):
+        return self.unresolved_break
+
+    def getContinue(self):
+        return self.unresolved_continue
+
+    def getReturn(self):
+        return self.unresolved_return
+
+    def clearBreak(self):
+        self.unresolved_break = []
+
+    def clearContinue(self):
+        self.unresolved_continue = []
+
+    def clearReturn(self):
+        self.unresolved_return = []
+
+    def clearReturnVariable(self):
+        self.returnvariable = None
+
+    def setReturnVariable(self, var):
+        self.returnvariable = var
+
+    def getReturnVariable(self):
+        return self.returnvariable
+
+    def __hash__(self):
+        return hash((self.name, self.ftype, id(self)))
+
+    def __eq__(self, other):
+        if type(self) != type(other):
+            return False
+        if self.name != other.name:
+            return False
+        if self.ftype != other.ftype:
+            return False
+        if id(self) != id(other):
+            return False
+        return True
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
