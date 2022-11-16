@@ -158,7 +158,7 @@ def find_memory_access_sub(node: ast.AST) -> bool:
     return False
 
 
-# judge whether memory accesses are performed
+# judge whether memory accesses are performed i.e. memory access functions are called
 def find_memory_access(stmts: list[ast.stmt]) -> bool:
     for s in stmts:
         if find_memory_access_sub(s):
@@ -212,16 +212,17 @@ def get_modified_vars(stmts: list[ast.stmt]) -> set[str]:
     return reduce(union, map(get_modified_vars_sub, stmts), set())
 
 
-def rename_vars_sub(node: ast.AST, vars: set[str], suffix: str) -> None:
+def rename_vars_sub(node: ast.AST, vars: set[str], suffix: list[str]) -> None:
     if isinstance(node, ast.Name):
         if node.id in vars:
-            node.id = '_'.join([node.id, suffix])
+            node.id = '_'.join([node.id] + suffix)
     for n in ast.iter_child_nodes(node):
         rename_vars_sub(n, vars, suffix)
 
 
-# rename the specified variables by appending '_'
-def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: str = '') -> list[ast.stmt]:
+# rename the specified variables (`vars`) in the given statements (`stmts`) by adding the given suffix (`suffix`)
+# example: foo -> foo_bar_2 if suffix = ['bar', '2']
+def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: list[str]) -> list[ast.stmt]:
     ret = []
     for stmt in stmts:
         copied_stmt = copy.deepcopy(stmt)
@@ -605,29 +606,18 @@ class CompileVisitor(ast.NodeVisitor):
                 except NameError:
                     return False
                 return True
+
+            prefetch_suffix = ['prefetch', str(self.prefetch_count)]
+            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
+            self.prefetch_count += 1
+
             modified_vars = get_modified_vars(body)
-            renamed_body = rename_vars(filtered_body, modified_vars, str(self.prefetch_count))
+            renamed_body = rename_vars(filtered_body, modified_vars, prefetch_suffix)
             renamed_body = temporary(renamed_body)
-            if len(list(filter(isbound, modified_vars))) > 1:
-                initialization = ast.Assign(
-                    targets=[ast.Tuple(
-                        elts=[ast.Name(id=v + '_' + str(self.prefetch_count), ctx=ast.Store()) for v in modified_vars if isbound(v)],
-                        ctx=ast.Store())],
-                    value=ast.Tuple(
-                        elts=[ast.Name(id=v, ctx=ast.Load()) for v in modified_vars if isbound(v)],
-                        ctx=ast.Load()))
-            elif len(list(filter(isbound, modified_vars))) > 0:
-                initialization = ast.Assign(
-                    targets=[ast.Name(id=v + '_' + str(self.prefetch_count), ctx=ast.Store()) for v in modified_vars if isbound(v)],
-                    value=[ast.Name(id=v, ctx=ast.Load()) for v in modified_vars if isbound(v)][0])
-            else:
-                initialization = ast.Pass()
 
             prefetch_iter_node = self.getTmpVariable()
 
             # change from main FSM to prefetch FSM
-            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
-            self.prefetch_count += 1
             self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
             self.fsm = self.prefetch_fsm
 
@@ -637,7 +627,9 @@ class CompileVisitor(ast.NodeVisitor):
             prefetch_idle_count = self.getFsmCount()
             self.incFsmCount()
             prefetch_active_count = self.getFsmCount()
-            self.visit(initialization)
+            copied_vars = list(filter(isbound, modified_vars))
+            if copied_vars:
+                self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
             self.setBind(prefetch_iter_node, begin_node)
             self.setFsm()
             self.incFsmCount()
