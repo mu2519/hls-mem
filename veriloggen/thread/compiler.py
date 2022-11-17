@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from functools import reduce
+from functools import partial, reduce
 import copy
 import ast
 import inspect
 import textwrap
 from collections import OrderedDict
-from typing import Any
+from typing import Literal, Any
 
 from veriloggen.fsm.fsm import FSM
 import veriloggen.core.vtypes as vtypes
@@ -22,118 +22,6 @@ _tmp_count = 0
 
 
 # compiler.py: Python AST -> FSM
-
-
-# def get_use_expr(expr: ast.expr) -> set[ast.expr]:
-#     if isinstance(expr, ast.BoolOp):
-#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.values))
-#     if isinstance(expr, ast.BinOp):
-#         return get_use_expr(expr.left) | get_use_expr(expr.right)
-#     if isinstance(expr, ast.UnaryOp):
-#         return get_use_expr(expr.operand)
-#     if isinstance(expr, ast.IfExp):
-#         return get_use_expr(expr.test) | get_use_expr(expr.body) | get_use_expr(expr.orelse)
-#     if isinstance(expr, ast.Compare):
-#         return get_use_expr(expr.left) | reduce(lambda x, y: x | y, map(get_use_expr, expr.comparators))
-#     if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
-#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.elts))
-#     if isinstance(expr, ast.Dict):
-#         return reduce(lambda x, y: x | y, map(get_use_expr, expr.keys)) | reduce(lambda x, y: x | y, map(get_use_expr, expr.values))
-#     if isinstance(expr, ast.Subscript):
-#         return get_use_expr(expr.value) | get_use_expr(expr.slice)
-#     if isinstance(expr, ast.Slice):
-#         return (get_use_expr(expr.lower) if expr.lower is not None else set()) | (get_use_expr(expr.upper) if expr.upper is not None else set()) | (get_use_expr(expr.step) if expr.step is not None else set())
-#     if isinstance(expr, ast.Attribute):
-#         return {expr}
-#     if isinstance(expr, ast.Name):
-#         return {expr}
-#     if isinstance(expr, ast.Constant):
-#         return set()
-#     raise TypeError(f'unexpected type {type(expr)}')
-
-
-# registered_func_list = ['cache_func', 'cc.func']
-
-
-# def get_essential_expr(expr: ast.expr) -> set:
-#     if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
-#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.elts))
-#     if isinstance(expr, ast.Dict):
-#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.keys + expr.values))
-#     if isinstance(expr, ast.BoolOp):
-#         return reduce(lambda x, y: x | y, map(get_essential_expr, expr.values))
-#     if isinstance(expr, ast.BinOp):
-#         return get_essential_expr(expr.left) | get_essential_expr(expr.right)
-#     if isinstance(expr, ast.UnaryOp):
-#         return get_essential_expr(expr.operand)
-#     if isinstance(expr, ast.IfExp):
-#         return get_essential_expr(expr.test) | get_essential_expr(expr.body) | get_essential_expr(expr.orelse)
-#     if isinstance(expr, ast.Compare):
-#         return reduce(lambda x, y: x | y, map(get_essential_expr, [expr.left] + expr.comparators))
-#     if isinstance(expr, ast.Subscript):
-#         return get_essential_expr(expr.value) | get_essential_expr(expr.slice)
-#     if isinstance(expr, ast.Slice):
-#         return reduce(lambda x, y: x | y, map(lambda e: get_essential_expr(e) if e is not None else set(), [expr.lower, expr.upper, expr.step]))
-#     if isinstance(expr, ast.Attribute):
-#         return get_essential_expr(expr.value)
-#     if isinstance(expr, (ast.Name, ast.Constant)):
-#         return set()
-#     if isinstance(expr, ast.Call):  # main logic
-#         if isinstance(expr.func, ast.Name):
-#             name = expr.func.id
-#         elif isinstance(expr.func, ast.Attribute):
-#             if isinstance(expr.func.value, ast.Name):
-#                 name = expr.func.value.id + '.' + expr.func.attr
-#             else:
-#                 raise NotImplementedError('complicated function calls are not supported')
-#         else:
-#             raise NotImplementedError('complicated function calls are not supported')
-#         if name in registered_func_list:
-#             return reduce(lambda x, y: x | y, [get_use_expr(e) for e in expr.args] + [get_use_expr(kw.value) for kw in expr.keywords])
-#         else:
-#             return reduce(lambda x, y: x | y, [get_essential_expr(e) for e in expr.args] + [get_essential_expr(kw.value) for kw in expr.keywords])
-#     raise TypeError(f'unexpected type {type(expr)}')
-
-
-# def get_essential_stmt(stmt: ast.stmt, var_set: set):
-#     if isinstance(stmt, ast.Assign):
-#         pass
-#     if isinstance(stmt, ast.AugAssign):
-#         target_name = stmt.target
-#     if isinstance(stmt, ast.Expr):
-#         return var_set + get_essential_expr(stmt.value)
-
-
-# def analyze(orig_stmts: list[ast.stmt], out_vars: set) -> tuple(list[ast.stmt], set):
-#     conv_stmts = []
-#     in_vars = out_vars
-#     for s in reversed(orig_stmts):
-#         if isinstance(s, ast.If):
-#             true_stmts, true_vars = analyze(s.body, in_vars)
-#             false_stmts, false_vars = analyze(s.orelse, in_vars)
-#             if true_stmts | false_stmts:
-#                 conv_stmts.append(ast.If(test=s.test, body=true_stmts, orelse=false_stmts))
-#             in_vars = true_vars | false_vars
-#         elif isinstance(s, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
-#             pass
-#         else:
-#             TypeError(f'unexpected type {type(s)}')
-#     return reversed(conv_stmts), in_vars
-
-
-# def analyze_wrapper(stmts: list[ast.stmts]) -> list[ast.stmts]:
-#     # stub
-#     ret = []
-#     for s in stmts:
-#         if isinstance(s, (ast.Assign, ast.AugAssign)):
-#             ret.append(s)
-#         elif isinstance(s, ast.If):
-#             ret.append(ast.If(test=s.test, body=analyze_wrapper(s.body), orelse=analyze_wrapper(s.orelse)))
-#         elif isinstance(s, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
-#             pass
-#         else:
-#             TypeError(f'unexpected type {type(s)}')
-#     return ret
 
 
 memory_access_func: list[str] = []
@@ -186,39 +74,29 @@ def union(x: set, y: set) -> set:
     return x | y
 
 
-# TODO: consider modification via function calls
-def get_modified_vars_sub(node: ast.AST) -> set[str]:
-    if isinstance(node, ast.Assign):  # incomplete implementation
-        def rec(expr: ast.expr) -> set[str]:
-            if isinstance(expr, (ast.List, ast.Tuple)):
-                return reduce(union, map(rec, expr.elts), set())
-            elif isinstance(expr, ast.Name):
-                return {expr.id}
-            else:
-                raise NotImplementedError
-        return reduce(union, map(rec, node.targets), set())
-    if isinstance(node, ast.AugAssign):  # incomplete implementation
-        if isinstance(node.target, ast.Name):
-            return {node.target.id}
-        else:
-            raise NotImplementedError
-    return reduce(union, map(get_modified_vars_sub, ast.iter_child_nodes(node)), set())
-
-
-# obtain modified variables
-def get_modified_vars(stmts: list[ast.stmt]) -> set[str]:
-    return reduce(union, map(get_modified_vars_sub, stmts), set())
-
-
-def get_referenced_vars_sub(node: ast.AST) -> set[str]:
-    if isinstance(node, ast.Name):
-        return {node.id} if isinstance(node.ctx, ast.Load) else set()
-    return reduce(union, map(get_referenced_vars_sub, ast.iter_child_nodes(node)), set())
-
-
-# obtain referenced (used) variables
-def get_referenced_vars(stmts: list[ast.stmt]) -> set[str]:
-    return reduce(union, map(get_referenced_vars_sub, stmts), set())
+# extract variables from the given source code
+def get_vars(code: ast.AST | list[ast.AST], ctx: Literal["load", "store", "both"]) -> set[str]:
+    match code:
+        case list() as nodes:
+            return reduce(union, map(partial(get_vars, ctx=ctx), nodes), set())
+        case ast.AST() as node:
+            match ctx:
+                case "load":
+                    if isinstance(node, ast.AugAssign):
+                        return get_vars(node.target, "store") | get_vars(node.value, "load")
+                    if isinstance(node, ast.Name):
+                        return {node.id} if isinstance(node.ctx, ast.Load) else set()
+                case "store":
+                    if isinstance(node, ast.Name):
+                        return {node.id} if isinstance(node.ctx, ast.Store) else set()
+                case "both":
+                    if isinstance(node, ast.Name):
+                        return {node.id}
+                case _:
+                    raise ValueError
+            return reduce(union, map(partial(get_vars, ctx=ctx), ast.iter_child_nodes(node)), set())
+        case _:
+            raise TypeError
 
 
 def get_memory_related_vars_sub(node: ast.AST) -> set[str]:
@@ -227,12 +105,12 @@ def get_memory_related_vars_sub(node: ast.AST) -> set[str]:
             if node.func.id in memory_access_func:
                 if node.keywords:
                     raise NotImplementedError
-                return get_referenced_vars(node.args)
+                return get_vars(node.args, "load")
         elif isinstance(node.func, ast.Attribute):
             if node.func.attr in memory_access_method:
                 if node.keywords:
                     raise NotImplementedError
-                return get_referenced_vars(node.args)
+                return get_vars(node.args, "load")
         else:
             raise NotImplementedError(f'unsupported callable type {type(node.func)}')
     return reduce(union, map(get_memory_related_vars_sub, ast.iter_child_nodes(node)), set())
@@ -249,15 +127,15 @@ def filter_memory_related_statements(stmts: list[ast.stmt]) -> list[ast.stmt]:
     while True:
         ischanged = False
         for s in reversed(stmts):
-            if get_modified_vars([s]) & needed_vars:
-                if not get_referenced_vars([s]).issubset(needed_vars):
+            if get_vars(s, "store") & needed_vars:
+                if not get_vars(s, "load").issubset(needed_vars):
                     ischanged = True
-                needed_vars |= get_referenced_vars([s])
+                needed_vars |= get_vars(s, "load")
         if not ischanged:
             break
     filtered_stmts: list[ast.stmt] = []
     for s in stmts:
-        if find_memory_access([s]) or (get_modified_vars([s]) & needed_vars):
+        if find_memory_access([s]) or (get_vars(s, "store") & needed_vars):
             filtered_stmts.append(s)
     return filtered_stmts
 
@@ -661,7 +539,7 @@ class CompileVisitor(ast.NodeVisitor):
             prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
             self.prefetch_count += 1
 
-            modified_vars = get_modified_vars(body)
+            modified_vars = get_vars(body, "store")
             prefetch_body = filter_memory_related_statements(filtered_body)
             renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
             print(ast.unparse(filtered_body))
