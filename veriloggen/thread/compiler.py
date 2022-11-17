@@ -137,7 +137,7 @@ _tmp_count = 0
 
 
 memory_access_func: list[str] = []
-memory_access_method: list[str] = ["dma_read", "dma_write"]
+memory_access_method: list[str] = ["dma_read"]
 
 
 def find_memory_access_sub(node: ast.AST) -> bool:
@@ -208,6 +208,58 @@ def get_modified_vars_sub(node: ast.AST) -> set[str]:
 # obtain modified variables
 def get_modified_vars(stmts: list[ast.stmt]) -> set[str]:
     return reduce(union, map(get_modified_vars_sub, stmts), set())
+
+
+def get_referenced_vars_sub(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id} if isinstance(node.ctx, ast.Load) else set()
+    return reduce(union, map(get_referenced_vars_sub, ast.iter_child_nodes(node)), set())
+
+
+# obtain referenced (used) variables
+def get_referenced_vars(stmts: list[ast.stmt]) -> set[str]:
+    return reduce(union, map(get_referenced_vars_sub, stmts), set())
+
+
+def get_memory_related_vars_sub(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            if node.func.id in memory_access_func:
+                if node.keywords:
+                    raise NotImplementedError
+                return get_referenced_vars(node.args)
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr in memory_access_method:
+                if node.keywords:
+                    raise NotImplementedError
+                return get_referenced_vars(node.args)
+        else:
+            raise NotImplementedError(f'unsupported callable type {type(node.func)}')
+    return reduce(union, map(get_memory_related_vars_sub, ast.iter_child_nodes(node)), set())
+
+
+def get_memory_related_vars(stmts: list[ast.stmt]) -> set[str]:
+    return reduce(union, map(get_memory_related_vars_sub, stmts), set())
+
+
+# extract statements related to memory accesses
+# currently rough (sufficient but not necessary) implementation
+def filter_memory_related_statements(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    needed_vars = get_memory_related_vars(stmts)
+    while True:
+        ischanged = False
+        for s in reversed(stmts):
+            if get_modified_vars([s]) & needed_vars:
+                if not get_referenced_vars([s]).issubset(needed_vars):
+                    ischanged = True
+                needed_vars |= get_referenced_vars([s])
+        if not ischanged:
+            break
+    filtered_stmts: list[ast.stmt] = []
+    for s in stmts:
+        if find_memory_access([s]) or (get_modified_vars([s]) & needed_vars):
+            filtered_stmts.append(s)
+    return filtered_stmts
 
 
 def rename_vars_sub(node: ast.AST, vars: set[str], suffix: list[str]) -> None:
@@ -610,7 +662,14 @@ class CompileVisitor(ast.NodeVisitor):
             self.prefetch_count += 1
 
             modified_vars = get_modified_vars(body)
-            renamed_body = rename_vars(filtered_body, modified_vars, prefetch_suffix)
+            prefetch_body = filter_memory_related_statements(filtered_body)
+            renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
+            print(ast.unparse(filtered_body))
+            print()
+            print(ast.unparse(prefetch_body))
+            print()
+            print(ast.unparse(renamed_body))
+            print()
             renamed_body = temporary(renamed_body)
 
             prefetch_iter_node = self.getTmpVariable()
