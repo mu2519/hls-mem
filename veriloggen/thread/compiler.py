@@ -269,7 +269,6 @@ class CompileVisitor(ast.NodeVisitor):
         self.point = point
 
         self.scope = ScopeFrameList()
-        self.loop_info = OrderedDict()
 
         for func in functions.values():
             self.scope.addFunction(func)
@@ -469,8 +468,6 @@ class CompileVisitor(ast.NodeVisitor):
         self.clearBreak()
         self.clearContinue()
 
-        self.setFsmLoop(begin_count, body_end_count)
-
     def visit_For(self, node: ast.For):
         if self.skip():
             return
@@ -649,8 +646,6 @@ class CompileVisitor(ast.NodeVisitor):
 
         self.clearBreak()
         self.clearContinue()
-
-        self.setFsmLoop(check_count, body_end_count, iter_node, step_node)
 
     def _for_list(self, node: ast.For):
         target_name = self.visit(node.target)
@@ -1472,18 +1467,6 @@ class CompileVisitor(ast.NodeVisitor):
 
     def getFsmCount(self):
         return self.fsm.current
-
-    # -------------------------------------------------------------------------
-    def setFsmLoop(self, begin, end, iter_node=None, step_node=None):
-        self.loop_info[(begin, end)] = (iter_node, step_node)
-
-    def getFsmLoops(self):
-        return self.loop_info
-
-    def getFsmCandidateLoops(self, pos):
-        candidates = [(b, e) for (b, e), (inode, unode)
-                      in self.loop_info.items() if b <= pos and pos <= e]
-        return candidates
 
     # -------------------------------------------------------------------------
     def getCurrentScope(self):
