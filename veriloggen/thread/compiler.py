@@ -6,6 +6,7 @@ import ast
 import inspect
 import textwrap
 from collections import OrderedDict
+from collections.abc import Sequence
 from typing import Literal, Any
 
 from veriloggen.fsm.fsm import FSM
@@ -74,10 +75,11 @@ def union(x: set, y: set) -> set:
     return x | y
 
 
+# "get variables"
 # extract variables from the given source code
-def get_vars(code: ast.AST | list[ast.AST], ctx: Literal["load", "store", "both"]) -> set[str]:
+def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal["load", "store", "both"]) -> set[str]:
     match code:
-        case list() as nodes:
+        case [*_] as nodes:
             return reduce(union, map(partial(get_vars, ctx=ctx), nodes), set())
         case ast.AST() as node:
             match ctx:
@@ -99,40 +101,43 @@ def get_vars(code: ast.AST | list[ast.AST], ctx: Literal["load", "store", "both"
             raise TypeError
 
 
-def get_memory_related_vars_sub(node: ast.AST) -> set[str]:
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name):
-            if node.func.id in memory_access_func:
-                if node.keywords:
-                    raise NotImplementedError
-                return get_vars(node.args, "load")
-        elif isinstance(node.func, ast.Attribute):
-            if node.func.attr in memory_access_method:
-                if node.keywords:
-                    raise NotImplementedError
-                return get_vars(node.args, "load")
-        else:
-            raise NotImplementedError(f'unsupported callable type {type(node.func)}')
-    return reduce(union, map(get_memory_related_vars_sub, ast.iter_child_nodes(node)), set())
+# "get memory-related variables"
+# extract variables related to memory accesses
+def get_mem_rel_vars(code: ast.AST | Sequence[ast.AST]) -> set[str]:
+    match code:
+        case [*_] as nodes:
+            return reduce(union, map(get_mem_rel_vars, nodes), set())
+        case ast.AST() as node:
+            match node:
+                case ast.Call(func=ast.Name()):
+                    if node.func.id in memory_access_func:
+                        return get_vars(node.args, "load")
+                case ast.Call(func=ast.Attribute()):
+                    if node.func.attr in memory_access_method:
+                        return get_vars(node.args, "load")
+                case ast.Call():
+                    raise NotImplementedError(f'unsupported callable type {type(node.func)}')
+            return reduce(union, map(get_mem_rel_vars, ast.iter_child_nodes(node)), set())
+        case _:
+            raise TypeError
 
 
-def get_memory_related_vars(stmts: list[ast.stmt]) -> set[str]:
-    return reduce(union, map(get_memory_related_vars_sub, stmts), set())
-
-
+# "filter memory-related statements"
 # extract statements related to memory accesses
-# currently rough (sufficient but not necessary) implementation
-def filter_memory_related_statements(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    needed_vars = get_memory_related_vars(stmts)
+# NOTE: currently rough (sufficient but not necessary) implementation
+def filter_mem_rel_stmts(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    # extract variables related to memory accesses and variables necessary to calculate them (recursively)
+    needed_vars = get_mem_rel_vars(stmts)
     while True:
         ischanged = False
         for s in reversed(stmts):
             if get_vars(s, "store") & needed_vars:
-                if not get_vars(s, "load").issubset(needed_vars):
+                if not get_vars(s, "load") <= needed_vars:
                     ischanged = True
-                needed_vars |= get_vars(s, "load")
+                    needed_vars |= get_vars(s, "load")
         if not ischanged:
             break
+    # extract statements related to memory accesses and statements to calculate data necessary for memory accesses
     filtered_stmts: list[ast.stmt] = []
     for s in stmts:
         if find_memory_access([s]) or (get_vars(s, "store") & needed_vars):
@@ -521,6 +526,7 @@ class CompileVisitor(ast.NodeVisitor):
                        iter_node, cond_node, update_node, body: list[ast.stmt],
                        target_update: tuple[Any, Any] | None = None):
 
+        # this variable enables communication between main FSM and prefetch FSM
         flag = self.getTmpVariable()
 
         filtered_body = filter_loop(body)
@@ -537,7 +543,7 @@ class CompileVisitor(ast.NodeVisitor):
             self.prefetch_count += 1
 
             modified_vars = get_vars(body, "store")
-            prefetch_body = filter_memory_related_statements(filtered_body)
+            prefetch_body = filter_mem_rel_stmts(filtered_body)
             renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
             print(ast.unparse(filtered_body))
             print()

@@ -3,13 +3,13 @@ from __future__ import annotations
 import copy
 import ast
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any
 
 
 class ScopeName(object):
 
-    def __init__(self, namelist: Iterable[str]):
+    def __init__(self, namelist: Sequence[str]):
         self.namelist = namelist
 
     def __repr__(self):
