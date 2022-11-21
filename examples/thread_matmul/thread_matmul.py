@@ -27,8 +27,8 @@ def mkLed():
     rst = m.Input('RST')
 
     addrwidth = 10
-    ram_a = vthread.RAM(m, 'ram_a', clk, rst, datawidth, addrwidth)
-    ram_b = vthread.RAM(m, 'ram_b', clk, rst, datawidth, addrwidth)
+    ram_a = vthread.Buffet(m, 'ram_a', clk, rst, datawidth, addrwidth)
+    ram_b = vthread.Buffet(m, 'ram_b', clk, rst, datawidth, addrwidth)
     ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
@@ -66,9 +66,13 @@ def mkLed():
 
                 b_addr += matrix_size * (datawidth // 8)
 
+                ram_b.shrink(matrix_size)
+
             maxi.dma_write(ram_c, 0, c_addr, matrix_size)
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
+
+            ram_a.shrink(matrix_size)
 
     th = vthread.Thread(m, 'th_matmul', clk, rst, matmul)
     fsm = th.start()

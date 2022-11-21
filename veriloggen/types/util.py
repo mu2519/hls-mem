@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import math
 
+import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.seq.seq as seq
 
@@ -17,7 +18,7 @@ def swap_type(cls):
     return cls._O, cls._I
 
 
-def make_port(m, _type, *args, **kwargs):
+def make_port(m: module.Module, _type: str, *args, **kwargs) -> vtypes._Variable:
     if 'no_reg' in kwargs and kwargs['no_reg']:
         _type = _type.replace('Reg', '')
         if len(_type) == 0:
@@ -51,7 +52,7 @@ def log2(value, maxsize=32):
     return vtypes.PatternMux(patterns)
 
 
-def overwrite_assign(targ, value):
+def overwrite_assign(targ: vtypes._Variable, value):
     prev_assign = targ._get_assign()
     if not prev_assign:
         targ.assign(value)
@@ -61,7 +62,7 @@ def overwrite_assign(targ, value):
         targ.module.append(prev_assign)
 
 
-def add_mux(targ, cond, value):
+def add_mux(targ: vtypes._Variable, cond, value):
     prev_assign = targ._get_assign()
     if not prev_assign:
         targ.assign(vtypes.Mux(cond, value, vtypes.IntX()))
@@ -73,7 +74,7 @@ def add_mux(targ, cond, value):
         targ.module.append(prev_assign)
 
 
-def add_enable_cond(targ, cond, value):
+def add_enable_cond(targ: vtypes._Variable, cond, value):
     prev_assign = targ._get_assign()
     if not prev_assign:
         targ.assign(vtypes.Mux(cond, value, 0))
@@ -85,7 +86,7 @@ def add_enable_cond(targ, cond, value):
         targ.module.append(prev_assign)
 
 
-def add_disable_cond(targ, cond, value):
+def add_disable_cond(targ: vtypes._Variable, cond, value):
     prev_assign = targ._get_assign()
     if not prev_assign:
         targ.assign(vtypes.Mux(cond, value, 1))

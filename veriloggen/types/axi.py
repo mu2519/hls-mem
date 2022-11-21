@@ -6,6 +6,7 @@ import functools
 import math
 from collections import defaultdict
 
+import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 from veriloggen.seq.seq import Seq
 from veriloggen.fsm.fsm import FSM
@@ -525,7 +526,8 @@ class AxiMaster(object):
     burst_size_width = 8
     boundary_size = 4096
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: module.Module, name: str, clk: vtypes._Variable, rst: vtypes._Variable,
+                 datawidth=32, addrwidth=32,
                  waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
                  raddr_id_width=0, rdata_id_width=0,
                  waddr_user_width=2, wdata_user_width=0, wresp_user_width=0,

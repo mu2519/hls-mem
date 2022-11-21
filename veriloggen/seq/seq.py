@@ -1,8 +1,6 @@
-from __future__ import absolute_import
-from __future__ import print_function
-import os
-import sys
 import collections
+from collections.abc import Sequence
+from typing import Any
 
 import veriloggen.core.vtypes as vtypes
 from veriloggen.core.module import Module
@@ -69,7 +67,15 @@ def TmpSeq(m, clk, rst=None, nohook=False, as_module=False, prefix=None):
 class Seq(vtypes.VeriloggenNode):
     """ Sequential Logic Manager """
 
-    def __init__(self, m, name, clk, rst=None, nohook=False, as_module=False):
+    def __init__(
+        self,
+        m: Module,
+        name: str,
+        clk: vtypes._Variable,
+        rst: vtypes._Variable | None = None,
+        nohook: bool = False,
+        as_module: bool = False
+    ):
         self.m = m
         self.name = name
         self.clk = clk
@@ -77,22 +83,22 @@ class Seq(vtypes.VeriloggenNode):
 
         self.tmp_count = 0
         self.delay_amount = 0
-        self.delayed_body = collections.defaultdict(list)
-        self.prev_dict = collections.OrderedDict()
-        self.body = []
+        self.delayed_body: collections.defaultdict[int, list[vtypes.VeriloggenNode]] = collections.defaultdict(list)
+        self.prev_dict: collections.OrderedDict[str, vtypes._Variable] = collections.OrderedDict()
+        self.body: list[vtypes.VeriloggenNode] = []
 
-        self.dst_var = collections.OrderedDict()
+        self.dst_var: collections.OrderedDict[str, vtypes.VeriloggenNode] = collections.OrderedDict()
         self.dst_visitor = SubstDstVisitor()
         self.reset_visitor = ResetVisitor()
 
         self.done = False
 
         self.last_cond = []
-        self.last_kwargs = {}
-        self.last_if_statement = None
+        self.last_kwargs: dict[str, Any] = {}
+        self.last_if_statement: vtypes.If | None = None
         self.next_else = False
         self.elif_cond = None
-        self.next_kwargs = {}
+        self.next_kwargs: dict[str, Any] = {}
 
         self.as_module = as_module
 
@@ -618,7 +624,7 @@ class Seq(vtypes.VeriloggenNode):
         return ret
 
     # -------------------------------------------------------------------------
-    def _add_statement(self, statement, keep=None, delay=None, cond=None,
+    def _add_statement(self, statement: Sequence[vtypes.VeriloggenNode], keep=None, delay: int | None = None, cond=None,
                        lazy_cond=False, eager_val=False, no_delay_cond=False):
 
         cond = make_condition(cond)
@@ -668,7 +674,7 @@ class Seq(vtypes.VeriloggenNode):
         return self
 
     # -------------------------------------------------------------------------
-    def _add_dst_var(self, statement):
+    def _add_dst_var(self, statement: Sequence[vtypes.VeriloggenNode]):
         for s in statement:
             values = self.dst_visitor.visit(s)
             for v in values:

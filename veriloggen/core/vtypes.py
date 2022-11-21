@@ -1,9 +1,9 @@
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import annotations
+
 import re
 
 
-from typing import Any
+from typing import Any, TypeAlias
 
 
 # Object ID counter for object sorting key
@@ -646,7 +646,7 @@ class _Variable(_Numeric):
     def get_signed(self):
         return self.signed
 
-    def _add_assign(self, s):
+    def _add_assign(self, s: Assign):
         if self.assign_value is not None:
             raise ValueError('already assigned')
         self.assign_value = s
@@ -1992,7 +1992,7 @@ class Always(VeriloggenNode):
 
 class Assign(VeriloggenNode):
 
-    def __init__(self, statement):
+    def __init__(self, statement: Subst):
         VeriloggenNode.__init__(self)
         self.statement = statement
         statement.left._add_assign(self)
@@ -2016,38 +2016,44 @@ class Initial(VeriloggenNode):
 
 class If(VeriloggenNode):
 
-    def __init__(self, condition):
+    def __init__(self, condition: IntegralType):
         VeriloggenNode.__init__(self)
         self.condition = condition
         self.true_statement = None
         self.false_statement = None
 
-        self.root = self
-        self.next_call = None
+        # when self is invoked, self.root is returned
+        # self.root may not be identical to self
+        self.root: If = self
 
-    def set_true_statement(self, *statement):
+        # when self is invoked,
+        # if self.next_call is not None,
+        # self.next_call handles the invocation on behave of self
+        self.next_call: If | None = None
+
+    def set_true_statement(self, *statement: VeriloggenNode) -> If:
         self.true_statement = tuple(statement)
         return self.root
 
-    def set_false_statement(self, *statement):
+    def set_false_statement(self, *statement: VeriloggenNode) -> If:
         self.false_statement = tuple(statement)
         return self.root
 
-    def Else(self, *statement):
+    def Else(self, *statement: VeriloggenNode) -> If:
         if self.next_call is not None:
             return self.next_call.Else(*statement)
         if self.false_statement is None:
             return self.set_false_statement(*statement)
         raise ValueError("False statement is already assigned.")
 
-    def Elif(self, condition):
+    def Elif(self, condition: IntegralType) -> If:
         next_If = If(condition)
         next_If.root = self.root
         self.Else(next_If)
         self.next_call = next_If
         return self
 
-    def __call__(self, *args):
+    def __call__(self, *args: VeriloggenNode) -> If:
         if self.next_call is not None:
             return self.next_call(*args)
         if self.true_statement is None:
@@ -2354,3 +2360,5 @@ class EmbeddedNumeric(EmbeddedCode, _Numeric):
 
 
 numerical_types = (_Numeric, int, bool, float, str)
+
+IntegralType: TypeAlias = _Numeric | int

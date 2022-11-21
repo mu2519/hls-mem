@@ -17,37 +17,37 @@ from collections.abc import Callable
 class Module(vtypes.VeriloggenNode):
     """ Verilog Module class """
 
-    def __init__(self, name=None, tmp_prefix='_tmp'):
+    def __init__(self, name: str | None = None, tmp_prefix: str = '_tmp'):
 
         vtypes.VeriloggenNode.__init__(self)
 
-        self.name: str = name if name is not None else self.__class__.__name__
+        self.name = name if name is not None else self.__class__.__name__
 
-        self.io_variable: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog ports
-        self.variable: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog variables
-        self.global_constant: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'parameter')
-        self.local_constant: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'localparam')
+        self.io_variable: collections.OrderedDict[str, vtypes.Input | vtypes.Output | vtypes.Inout] = collections.OrderedDict()  # the dictionary of Verilog ports
+        self.variable: collections.OrderedDict[str, vtypes.Wire | vtypes.Reg | vtypes.Integer | vtypes.Real | vtypes.Genvar] = collections.OrderedDict()  # the dictionary of Verilog variables
+        self.global_constant: collections.OrderedDict[str, vtypes.Parameter] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'parameter')
+        self.local_constant: collections.OrderedDict[str, vtypes.Localparam] = collections.OrderedDict()  # the dictionary of Verilog constants (declared as 'localparam')
 
-        self.function: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog functions
-        self.task: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog tasks
+        self.function: collections.OrderedDict[str, function.Function] = collections.OrderedDict()  # the dictionary of Verilog functions
+        self.task: collections.OrderedDict[str, task.Task] = collections.OrderedDict()  # the dictionary of Verilog tasks
 
-        self.assign: list[Any] = []  # the list of Verilog assign statements
-        self.always: list[Any] = []  # the list of Verilog always blocks
-        self.initial: list[Any] = []  # the list of Verilog initial blocks
+        self.assign: list[vtypes.Assign] = []  # the list of Verilog assign statements
+        self.always: list[vtypes.Always] = []  # the list of Verilog always blocks
+        self.initial: list[vtypes.Initial] = []  # the list of Verilog initial blocks
 
-        self.instance: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog instances (Verilog module instantiations)
-        self.submodule: collections.OrderedDict[str, Any] = collections.OrderedDict()  # the dictionary of Verilog submodules -> representing module hierarchy via instantiation
-        self.generate: collections.OrderedDict[str | None, Any | list[Any]] = collections.OrderedDict()  # the dictionary of Verilog generate blocks
+        self.instance: collections.OrderedDict[str, Instance] = collections.OrderedDict()  # the dictionary of Verilog instances (Verilog module instantiations)
+        self.submodule: collections.OrderedDict[str, Module | StubModule] = collections.OrderedDict()  # the dictionary of Verilog submodules -> representing module hierarchy via instantiation
+        self.generate: collections.OrderedDict[str | None, Generate | list[Generate]] = collections.OrderedDict()  # the dictionary of Verilog generate blocks
 
-        self.items: list[Any] = []  # the list of all kinds of Verilog constructs
+        self.items: list[vtypes.VeriloggenNode] = []  # the list of all kinds of Verilog constructs
 
         # self.items = self.io_variable.values() + self.variable.values() + self.global_constant.values() + self.local_constant.values() + self.function.values() + self.task.values() + self.assign + self.always + self.initial + self.instance.values() + self.generate.values()
         # self.submodule is exceptional
 
-        self.tmp_prefix: str = tmp_prefix
-        self.tmp_count: int = 0
-        self.hook: list[tuple[Callable, list | None, dict | None]] = []  # the list of methods with arguments which are called just before Verilog code generation (i.e. veriloggen.verilog.to_verilog)
-        self.used: bool = False  # indicating whether this module has been ever instantiated
+        self.tmp_prefix = tmp_prefix
+        self.tmp_count = 0
+        self.hook: list[tuple[Callable, tuple | None, dict[str, Any] | None]] = []  # the list of methods with arguments which are called just before Verilog code generation (i.e. veriloggen.verilog.to_verilog)
+        self.used = False  # indicating whether this module has been ever instantiated
 
     # -------------------------------------------------------------------------
     # User interface for variables
@@ -1023,7 +1023,12 @@ class Module(vtypes.VeriloggenNode):
         obj = self.to_hook_resolved_obj()
         return to_verilog.write_verilog(obj, filename, for_verilator)
 
-    def add_hook(self, method, args=None, kwargs=None):
+    def add_hook(
+        self,
+        method: Callable,
+        args: tuple | None = None,
+        kwargs: dict[str, Any] | None = None
+    ) -> None:
         """ add a hooked method to 'to_verilog()' """
         self.hook.append((method, args, kwargs))
 

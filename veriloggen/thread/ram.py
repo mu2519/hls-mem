@@ -1,16 +1,13 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
-import functools
 import math
 import collections
 
+import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
 import veriloggen.types.util as util
 
-from veriloggen.seq.seq import Seq, TmpSeq, make_condition
-from veriloggen.fsm.fsm import TmpFSM
+from veriloggen.seq.seq import Seq, make_condition
+from veriloggen.fsm.fsm import FSM, TmpFSM
 from veriloggen.types.ram import RAMInterface, mkRAMDefinition
 
 from .ttypes import _MutexFunction
@@ -19,10 +16,20 @@ from .ttypes import _MutexFunction
 class RAM(_MutexFunction):
     __intrinsics__ = ('read', 'write') + _MutexFunction.__intrinsics__
 
-    def __init__(self, m, name, clk, rst,
-                 datawidth=32, addrwidth=10, numports=1,
-                 initvals=None, nocheck_initvals=False,
-                 ram_style=None, external_ports=None):
+    def __init__(
+        self,
+        m: module.Module,
+        name: str,
+        clk: vtypes._Variable,
+        rst: vtypes._Variable,
+        datawidth: int = 32,
+        addrwidth: int = 10,
+        numports: int = 1,
+        initvals=None,
+        nocheck_initvals=False,
+        ram_style=None,
+        external_ports: tuple[int] | None = None
+    ):
 
         self.m = m
         self.name = name
@@ -40,7 +47,7 @@ class RAM(_MutexFunction):
         if external_ports is None:
             external_ports = ()
 
-        self.interfaces = []
+        self.interfaces: list[RAMInterface] = []
 
         for i in range(numports):
             if i in external_ports:
@@ -156,11 +163,14 @@ class RAM(_MutexFunction):
         util.add_enable_cond(self.interfaces[port].wenable, enable, vtypes.Int(1, 1))
         util.add_enable_cond(self.interfaces[port].enable, enable, vtypes.Int(1, 1))
 
-    def read(self, fsm, addr, port=0):
+    def read(self, fsm: FSM, addr, port=0, cond=None):
         """ intrinsic read operation using a shared Seq object """
 
         port = vtypes.to_int(port)
-        cond = fsm.state == fsm.current
+        if cond is None:
+            cond = fsm.state == fsm.current
+        else:
+            cond = vtypes.Ands(cond, fsm.state == fsm.current)
 
         rdata, rvalid = self.read_rtl(addr, port, cond)
         rdata_reg = self.m.TmpReg(self.datawidth, initval=0, signed=True,
@@ -173,7 +183,7 @@ class RAM(_MutexFunction):
 
         return rdata_reg
 
-    def write(self, fsm, addr, wdata, port=0, cond=None):
+    def write(self, fsm: FSM, addr, wdata, port=0, cond=None):
         """ intrinsic write operation using a shared Seq object """
 
         port = vtypes.to_int(port)

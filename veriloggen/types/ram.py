@@ -8,13 +8,13 @@ from veriloggen.core.module import Module
 from . import util
 
 
-def mkRAMDefinition(name, datawidth=32, addrwidth=10, numports=2,
+def mkRAMDefinition(name: str, datawidth=32, addrwidth=10, numports=2,
                     initvals=None, sync=True, with_enable=False,
                     nocheck_initvals=False, ram_style=None):
     m = Module(name)
     clk = m.Input('CLK')
 
-    interfaces = []
+    interfaces: list[RAMSlaveInterface] = []
 
     for i in range(numports):
         interface = RAMSlaveInterface(
@@ -97,12 +97,22 @@ class RAMInterface(object):
     _I = 'Wire'
     _O = 'Wire'
 
-    def __init__(self, m, name=None, datawidth=32, addrwidth=10,
-                 itype=None, otype=None,
-                 p_addr='addr', p_rdata='rdata',
-                 p_wdata='wdata', p_wenable='wenable',
-                 p_enable='enable',
-                 with_enable=False, index=None):
+    def __init__(
+        self,
+        m: Module,
+        name: str | None = None,
+        datawidth: int = 32,
+        addrwidth: int = 10,
+        itype: str | None = None,
+        otype: str | None = None,
+        p_addr: str = 'addr',
+        p_rdata: str = 'rdata',
+        p_wdata: str = 'wdata',
+        p_wenable: str = 'wenable',
+        p_enable: str = 'enable',
+        with_enable: bool = False,
+        index=None
+    ):
 
         if itype is None:
             itype = self._I

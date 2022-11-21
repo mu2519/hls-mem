@@ -6,8 +6,8 @@ import ast
 import inspect
 import textwrap
 from collections import OrderedDict
-from collections.abc import Sequence
-from typing import Literal, Any
+from collections.abc import Sequence, Mapping
+from typing import Literal, Any, Callable
 
 from veriloggen.fsm.fsm import FSM
 import veriloggen.core.vtypes as vtypes
@@ -252,8 +252,9 @@ class FunctionVisitor(ast.NodeVisitor):
 class CompileVisitor(ast.NodeVisitor):
 
     def __init__(self, m, name: str, clk, rst, fsm,
-                 functions: OrderedDict[str, ast.FunctionDef], intrinsic_functions,
-                 intrinsic_methods,
+                 functions: Mapping[str, ast.FunctionDef],
+                 intrinsic_functions: Mapping[str, Callable],
+                 intrinsic_methods: Mapping[str, Callable],
                  start_frame,
                  datawidth=32, point=16):
 
@@ -526,87 +527,87 @@ class CompileVisitor(ast.NodeVisitor):
                        iter_node, cond_node, update_node, body: list[ast.stmt],
                        target_update: tuple[Any, Any] | None = None):
 
-        # this variable enables communication between main FSM and prefetch FSM
-        flag = self.getTmpVariable()
+        # # this variable enables communication between main FSM and prefetch FSM
+        # flag = self.getTmpVariable()
 
-        filtered_body = filter_loop(body)
-        if find_memory_access(filtered_body):
-            def isbound(var: str) -> bool:
-                try:
-                    self.getVariable(var)
-                except NameError:
-                    return False
-                return True
+        # filtered_body = filter_loop(body)
+        # if find_memory_access(filtered_body):
+        #     def isbound(var: str) -> bool:
+        #         try:
+        #             self.getVariable(var)
+        #         except NameError:
+        #             return False
+        #         return True
 
-            prefetch_suffix = ['prefetch', str(self.prefetch_count)]
-            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
-            self.prefetch_count += 1
+        #     prefetch_suffix = ['prefetch', str(self.prefetch_count)]
+        #     prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
+        #     self.prefetch_count += 1
 
-            modified_vars = get_vars(body, "store")
-            prefetch_body = filter_mem_rel_stmts(filtered_body)
-            renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
-            print(ast.unparse(filtered_body))
-            print()
-            print(ast.unparse(prefetch_body))
-            print()
-            print(ast.unparse(renamed_body))
-            print()
-            renamed_body = temporary(renamed_body)
+        #     modified_vars = get_vars(body, "store")
+        #     prefetch_body = filter_mem_rel_stmts(filtered_body)
+        #     renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
+        #     print(ast.unparse(filtered_body))
+        #     print()
+        #     print(ast.unparse(prefetch_body))
+        #     print()
+        #     print(ast.unparse(renamed_body))
+        #     print()
+        #     renamed_body = temporary(renamed_body)
 
-            prefetch_iter_node = self.getTmpVariable()
+        #     prefetch_iter_node = self.getTmpVariable()
 
-            # change from main FSM to prefetch FSM
-            self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
-            self.fsm = self.prefetch_fsm
+        #     # change from main FSM to prefetch FSM
+        #     self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
+        #     self.fsm = self.prefetch_fsm
 
-            self.pushScope()
+        #     self.pushScope()
 
-            # initialize
-            prefetch_idle_count = self.getFsmCount()
-            self.incFsmCount()
-            prefetch_active_count = self.getFsmCount()
-            copied_vars = list(filter(isbound, modified_vars))
-            if copied_vars:
-                self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
-            self.setBind(prefetch_iter_node, begin_node)
-            self.setFsm()
-            self.incFsmCount()
+        #     # initialize
+        #     prefetch_idle_count = self.getFsmCount()
+        #     self.incFsmCount()
+        #     prefetch_active_count = self.getFsmCount()
+        #     copied_vars = list(filter(isbound, modified_vars))
+        #     if copied_vars:
+        #         self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
+        #     self.setBind(prefetch_iter_node, begin_node)
+        #     self.setFsm()
+        #     self.incFsmCount()
 
-            # condition check
-            prefetch_check_count = self.getFsmCount()
-            self.incFsmCount()
-            prefetch_body_begin_count = self.getFsmCount()
+        #     # condition check
+        #     prefetch_check_count = self.getFsmCount()
+        #     self.incFsmCount()
+        #     prefetch_body_begin_count = self.getFsmCount()
 
-            # body
-            for b in renamed_body:
-                self.visit(b)
+        #     # body
+        #     for b in renamed_body:
+        #         self.visit(b)
 
-            self.popScope()
+        #     self.popScope()
 
-            prefetch_body_end_count = self.getFsmCount()
+        #     prefetch_body_end_count = self.getFsmCount()
 
-            # update
-            self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
-            self.incFsmCount()
-            prefetch_loop_exit_count = self.getFsmCount()
+        #     # update
+        #     self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
+        #     self.incFsmCount()
+        #     prefetch_loop_exit_count = self.getFsmCount()
 
-            self.setFsm(prefetch_body_end_count, prefetch_check_count)
-            self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
+        #     self.setFsm(prefetch_body_end_count, prefetch_check_count)
+        #     self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
 
-            self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
-            self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+        #     self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
+        #     self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
 
-            # change from prefetch FSM to main FSM
-            self.fsm = self.main_fsm
+        #     # change from prefetch FSM to main FSM
+        #     self.fsm = self.main_fsm
 
         self.pushScope()
 
-        self.setBind(flag, vtypes.Int(1))
-        self.setFsm()
-        self.incFsmCount()
-        self.setBind(flag, vtypes.Int(0))
-        self.setFsm()
-        self.incFsmCount()
+        # self.setBind(flag, vtypes.Int(1))
+        # self.setFsm()
+        # self.incFsmCount()
+        # self.setBind(flag, vtypes.Int(0))
+        # self.setFsm()
+        # self.incFsmCount()
 
         # initialize
         self.setBind(iter_node, begin_node)
@@ -682,7 +683,7 @@ class CompileVisitor(ast.NodeVisitor):
                                    target_update)
 
     # --------------------------------------------------------------------------
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call):
         if self.skip():
             return
 
@@ -694,8 +695,8 @@ class CompileVisitor(ast.NodeVisitor):
 
         raise NotImplementedError('%s' % str(ast.dump(node)))
 
-    def _call_Name(self, node):
-        name = node.func.id
+    def _call_Name(self, node: ast.Call):
+        name: str = node.func.id
 
         # system task
         if name == 'print':  # display
@@ -934,7 +935,7 @@ class CompileVisitor(ast.NodeVisitor):
             return retvar
         return vtypes.Int(0)
 
-    def _call_Name_intrinsic_function(self, node, name):
+    def _call_Name_intrinsic_function(self, node: ast.Call, name: str):
         args = []
         args.append(self.fsm)
         for arg in node.args:
@@ -948,7 +949,7 @@ class CompileVisitor(ast.NodeVisitor):
 
         return func(*args, **kwargs)
 
-    def _call_Attribute(self, node):
+    def _call_Attribute(self, node: ast.Call):
         value = self.visit(node.func.value)
         method = getattr(value, node.func.attr)
 

@@ -5,6 +5,7 @@ import math
 import functools
 from collections import OrderedDict
 
+import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.axi as axi
 from veriloggen.fsm.fsm import FSM
@@ -12,6 +13,7 @@ from veriloggen.optimizer import try_optimize as optimize
 
 from .ttypes import _MutexFunction
 from .ram import RAM, MultibankRAM, to_multibank_ram
+from .buffet import Buffet
 from .fifo import FIFO
 
 
@@ -33,7 +35,8 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                       'dma_wait',
                       'set_global_base_addr',) + _MutexFunction.__intrinsics__
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: module.Module, name: str, clk: vtypes._Variable, rst: vtypes._Variable,
+                 datawidth=32, addrwidth=32,
                  waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
                  raddr_id_width=0, rdata_id_width=0,
                  waddr_user_width=2, wdata_user_width=0, wresp_user_width=0,
@@ -143,8 +146,8 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             self.read_start(0)
         )
 
-        self.read_op_id_map = OrderedDict()
-        self.read_op_id_count = 1
+        self.read_op_id_map: OrderedDict[tuple[int | tuple[int, ...], int, str], int] = OrderedDict()
+        self.read_op_id_count: int = 1
         self.read_ops = []
 
         self.read_req_fsm = None
@@ -244,7 +247,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         else:
             self.global_base_addr = None
 
-    def read(self, fsm, global_addr):
+    def read(self, fsm: FSM, global_addr):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -285,7 +288,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         return rdata
 
-    def write(self, fsm, global_addr, value):
+    def write(self, fsm: FSM, global_addr, value):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -322,7 +325,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         )
         fsm.If(ack).goto_next()
 
-    def write_fence(self, fsm, global_addr, value):
+    def write_fence(self, fsm: FSM, global_addr, value):
 
         self.write(fsm, global_addr, value)
 
@@ -330,7 +333,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         fsm.If(res).goto_next()
 
     # DMA
-    def dma_read(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_read(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                  local_stride=1, port=0):
 
         local_blocksize = 1
@@ -339,14 +342,14 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_read(fsm)
 
-    def dma_read_async(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_read_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                        local_stride=1, port=0):
 
         local_blocksize = 1
         self._dma_read(fsm, ram, local_addr, global_addr, local_size,
                        local_stride, local_blocksize, port)
 
-    def dma_write(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_write(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                   local_stride=1, port=0):
 
         local_blocksize = 1
@@ -355,7 +358,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_write(fsm)
 
-    def dma_write_async(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_write_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                         local_stride=1, port=0):
 
         local_blocksize = 1
@@ -363,7 +366,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                         local_stride, local_blocksize, port)
 
     # DMA for each bank
-    def dma_read_bank(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def dma_read_bank(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                       local_bank_stride=1, port=0):
 
         self._dma_read_bank(fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
@@ -371,13 +374,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_read(fsm)
 
-    def dma_read_bank_async(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def dma_read_bank_async(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                             local_bank_stride=1, port=0):
 
         self._dma_read_bank(fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
                             local_bank_stride, port)
 
-    def _dma_read_bank(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def _dma_read_bank(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                        local_bank_stride=1, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -405,7 +408,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             fsm.goto_from(check, s, cond=bank == i)
             fsm.goto_from(e, fin)
 
-    def dma_write_bank(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def dma_write_bank(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                        local_bank_stride=1, port=0):
 
         self._dma_write_bank(fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
@@ -413,13 +416,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_write(fsm)
 
-    def dma_write_bank_async(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def dma_write_bank_async(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                              local_bank_stride=1, port=0):
 
         self._dma_write_bank(fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
                              local_bank_stride, port)
 
-    def _dma_write_bank(self, fsm, ram, bank, local_bank_addr, global_addr, local_bank_size,
+    def _dma_write_bank(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
                         local_bank_stride=1, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -448,7 +451,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             fsm.goto_from(e, fin)
 
     # DMA with block interleave
-    def dma_read_block(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def dma_read_block(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                        local_blocksize=1, local_stride=None, port=0):
 
         self._dma_read_block(fsm, ram, local_bank_addr, global_addr, local_size,
@@ -456,13 +459,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_read(fsm)
 
-    def dma_read_block_async(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def dma_read_block_async(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                              local_blocksize=1, local_stride=None, port=0):
 
         self._dma_read_block(fsm, ram, local_bank_addr, global_addr, local_size,
                              local_blocksize, local_stride, port)
 
-    def _dma_read_block(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def _dma_read_block(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                         local_blocksize=1, local_stride=None, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -508,7 +511,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         self._dma_read(fsm, ram, local_bank_addr, global_addr, local_size,
                        local_stride, local_blocksize, port, ram_method)
 
-    def dma_write_block(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def dma_write_block(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                         local_blocksize=1, local_stride=None, port=0):
 
         self._dma_write_block(fsm, ram, local_bank_addr, global_addr, local_size,
@@ -516,13 +519,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_write(fsm)
 
-    def dma_write_block_async(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def dma_write_block_async(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                               local_blocksize=1, local_stride=None, port=0):
 
         self._dma_write_block(fsm, ram, local_bank_addr, global_addr, local_size,
                               local_blocksize, local_stride, port)
 
-    def _dma_write_block(self, fsm, ram, local_bank_addr, global_addr, local_size,
+    def _dma_write_block(self, fsm: FSM, ram, local_bank_addr, global_addr, local_size,
                          local_blocksize=1, local_stride=None, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -569,7 +572,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                         local_stride, local_blocksize, port, ram_method)
 
     # multi-bank packed DMA
-    def dma_read_packed(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_read_packed(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                         local_stride=None, port=0):
 
         self._dma_read_packed(fsm, ram, local_addr, global_addr, local_size,
@@ -577,13 +580,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_read(fsm)
 
-    def dma_read_packed_async(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_read_packed_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                               local_stride=None, port=0):
 
         self._dma_read_packed(fsm, ram, local_addr, global_addr, local_size,
                               local_stride, port)
 
-    def _dma_read_packed(self, fsm, ram, local_addr, global_addr, local_size,
+    def _dma_read_packed(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                          local_stride=None, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -617,7 +620,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         self._dma_read(fsm, ram, local_addr, global_addr, local_packed_size,
                        local_stride, local_blocksize, port, ram_method)
 
-    def dma_write_packed(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_write_packed(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                          local_stride=None, port=0):
 
         self._dma_write_packed(fsm, ram, local_addr, global_addr, local_size,
@@ -625,13 +628,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_write(fsm)
 
-    def dma_write_packed_async(self, fsm, ram, local_addr, global_addr, local_size,
+    def dma_write_packed_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                                local_stride=None, port=0):
 
         self._dma_write_packed(fsm, ram, local_addr, global_addr, local_size,
                                local_stride, port)
 
-    def _dma_write_packed(self, fsm, ram, local_addr, global_addr, local_size,
+    def _dma_write_packed(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                           local_stride=None, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -666,7 +669,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                         local_stride, local_blocksize, port, ram_method)
 
     # DMA with broadcast
-    def dma_read_bcast(self, fsm, ram, local_bank_addr, global_addr, local_bank_size,
+    def dma_read_bcast(self, fsm: FSM, ram, local_bank_addr, global_addr, local_bank_size,
                        local_bank_stride=1, port=0):
 
         self._dma_read_bcast(fsm, ram, local_bank_addr, global_addr, local_bank_size,
@@ -674,13 +677,13 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.dma_wait_read(fsm)
 
-    def dma_read_bcast_async(self, fsm, ram, local_bank_addr, global_addr, local_bank_size,
+    def dma_read_bcast_async(self, fsm: FSM, ram, local_bank_addr, global_addr, local_bank_size,
                              local_bank_stride=1, port=0):
 
         self._dma_read_bcast(fsm, ram, local_bank_addr, global_addr, local_bank_size,
                              local_bank_stride, port)
 
-    def _dma_read_bcast(self, fsm, ram, local_bank_addr, global_addr, local_bank_size,
+    def _dma_read_bcast(self, fsm: FSM, ram, local_bank_addr, global_addr, local_bank_size,
                         local_bank_stride=1, port=0):
 
         if isinstance(ram, (tuple, list)):
@@ -695,30 +698,30 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                        local_bank_stride, local_blocksize, port, ram_method)
 
     # wait
-    def dma_wait_read(self, fsm):
+    def dma_wait_read(self, fsm: FSM):
 
         fsm.If(self.read_idle).goto_next()
 
-    def dma_wait_write(self, fsm):
+    def dma_wait_write(self, fsm: FSM):
 
         res = self.write_completed()
         fsm.If(self.write_idle, res).goto_next()
 
-    def dma_wait_write_idle(self, fsm):
+    def dma_wait_write_idle(self, fsm: FSM):
 
         fsm.If(self.write_idle).goto_next()
 
-    def dma_wait_write_response(self, fsm):
+    def dma_wait_write_response(self, fsm: FSM):
 
         res = self.write_completed()
         fsm.If(res).goto_next()
 
-    def dma_wait(self, fsm):
+    def dma_wait(self, fsm: FSM):
 
         res = self.write_completed()
         fsm.If(self.read_idle, self.write_idle, res).goto_next()
 
-    def set_global_base_addr(self, fsm, addr):
+    def set_global_base_addr(self, fsm: FSM, addr):
 
         if not self.use_global_base_addr:
             raise ValueError("global_base_addr is disabled.")
@@ -732,17 +735,20 @@ class AXIM(axi.AxiMaster, _MutexFunction):
     # --------------------
     # read
     # --------------------
-    def _dma_read(self, fsm, ram, local_addr, global_addr, local_size,
+    def _dma_read(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                   local_stride=1, local_blocksize=1, port=0, ram_method=None):
 
         if isinstance(ram, (tuple, list)):
             ram = to_multibank_ram(ram)
 
-        if not isinstance(ram, (RAM, MultibankRAM)):
-            raise TypeError('RAM object is required.')
+        if not isinstance(ram, (RAM, MultibankRAM, Buffet)):
+            raise TypeError('RAM, MultibankRAM, or Buffet object is required.')
 
         if ram_method is None:
-            ram_method = getattr(ram, 'write_burst')
+            if isinstance(ram, (RAM, MultibankRAM)):
+                ram_method = getattr(ram, 'write_burst')
+            else:
+                ram_method = getattr(ram, 'fill_burst')
 
         ram_method_name = (ram_method.func.__name__
                            if isinstance(ram_method, functools.partial) else
@@ -771,9 +777,9 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         fsm.If(self.read_req_idle).goto_next()
 
-    def _set_read_request(self, ram, port, ram_method, ram_datawidth,
+    def _set_read_request(self, ram, port, ram_method, ram_datawidth: int,
                           start, local_addr, global_addr,
-                          local_size, global_size, local_stride, local_blocksize):
+                          local_size: vtypes.IntegralType, global_size: vtypes.IntegralType, local_stride: vtypes.IntegralType, local_blocksize):
 
         # adjust global_size
         if self.datawidth == ram_datawidth:
@@ -783,6 +789,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         elif self.datawidth < ram_datawidth:
             # narrow
             pack_size = ram_datawidth // self.datawidth
+            # given x > 0, x & (x - 1) == 0 judges whether x is a power of two
             global_size = (global_size << int(math.log(pack_size, 2))
                            if pack_size & (pack_size - 1) == 0 else
                            global_size * pack_size)
@@ -1127,7 +1134,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
     # --------------------
     # write
     # --------------------
-    def _dma_write(self, fsm, ram, local_addr, global_addr, local_size,
+    def _dma_write(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                    local_stride=1, local_blocksize=1, port=0, ram_method=None):
 
         if isinstance(ram, (tuple, list)):
@@ -1574,18 +1581,18 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             self.write_data_idle(1)
         )
 
-    def _set_flag(self, fsm, prefix='axim_flag'):
+    def _set_flag(self, fsm: FSM, prefix='axim_flag'):
         flag = self.m.TmpWire(prefix=prefix)
         flag.assign(fsm.here)
         return flag
 
     def _get_read_op_id(self, ram, port, ram_method):
 
-        ram_id = ram._id()
-        port = vtypes.to_int(port)
-        ram_method_name = (ram_method.func.__name__
-                           if isinstance(ram_method, functools.partial) else
-                           ram_method.__name__)
+        ram_id: int | tuple[int, ...] = ram._id()
+        port: int = vtypes.to_int(port)
+        ram_method_name: str = (ram_method.func.__name__
+                                if isinstance(ram_method, functools.partial) else
+                                ram_method.__name__)
         op = (ram_id, port, ram_method_name)
 
         if op in self.read_op_id_map:
@@ -1615,7 +1622,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         return op_id
 
-    def _check_4KB_boundary(self, fsm, max_burstlen,
+    def _check_4KB_boundary(self, fsm: FSM, max_burstlen,
                             req_global_addr, req_size, rest_size, cond=None):
 
         self.seq.If(cond, rest_size <= max_burstlen,
@@ -1709,7 +1716,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 class AXIMVerify(AXIM):
     __intrinsics__ = ('read_delayed', 'write_delayed') + AXIM.__intrinsics__
 
-    def read_delayed(self, fsm, global_addr, delay):
+    def read_delayed(self, fsm: FSM, global_addr, delay):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -1757,7 +1764,7 @@ class AXIMVerify(AXIM):
 
         return rdata
 
-    def write_delayed(self, fsm, global_addr, value, delay):
+    def write_delayed(self, fsm: FSM, global_addr, value, delay):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -1825,7 +1832,7 @@ class AXIMLite(axi.AxiLiteMaster, _MutexFunction):
 
         self.mutex = None
 
-    def read(self, fsm, global_addr):
+    def read(self, fsm: FSM, global_addr):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -1851,7 +1858,7 @@ class AXIMLite(axi.AxiLiteMaster, _MutexFunction):
 
         return rdata
 
-    def write(self, fsm, global_addr, value):
+    def write(self, fsm: FSM, global_addr, value):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -1872,14 +1879,14 @@ class AXIMLite(axi.AxiLiteMaster, _MutexFunction):
         ack = vtypes.Ors(self.wdata.wready, vtypes.Not(self.wdata.wvalid))
         fsm.If(ack).goto_next()
 
-    def write_fence(self, fsm, global_addr, value):
+    def write_fence(self, fsm: FSM, global_addr, value):
 
         self.write(fsm, global_addr, value)
 
         res = self.write_completed()
         fsm.If(res).goto_next()
 
-    def set_global_base_addr(self, fsm, addr):
+    def set_global_base_addr(self, fsm: FSM, addr):
 
         if not self.use_global_base_addr:
             raise ValueError("global_base_addr is disabled.")
@@ -1893,7 +1900,7 @@ class AXIMLite(axi.AxiLiteMaster, _MutexFunction):
 class AXIMLiteVerify(AXIMLite):
     __intrinsics__ = ('read_delayed', 'write_delayed') + AXIMLite.__intrinsics__
 
-    def read_delayed(self, fsm, global_addr, delay):
+    def read_delayed(self, fsm: FSM, global_addr, delay):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
@@ -1926,7 +1933,7 @@ class AXIMLiteVerify(AXIMLite):
 
         return rdata
 
-    def write_delayed(self, fsm, global_addr, value, delay):
+    def write_delayed(self, fsm: FSM, global_addr, value, delay):
         if self.use_global_base_addr:
             global_addr = self.global_base_addr + global_addr
 
