@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from veriloggen import *
 import veriloggen.thread as vthread
 import veriloggen.types.axi as axi
+from veriloggen.thread import inchworm
 
 axi_datawidth = 32
 datawidth = 32
@@ -27,8 +28,8 @@ def mkLed():
     rst = m.Input('RST')
 
     addrwidth = 10
-    ram_a = vthread.Buffet(m, 'ram_a', clk, rst, datawidth, addrwidth)
-    ram_b = vthread.Buffet(m, 'ram_b', clk, rst, datawidth, addrwidth)
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth + 1)
+    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth + 1)
     ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
@@ -51,28 +52,28 @@ def mkLed():
         a_addr, c_addr = a_offset, c_offset
 
         for i in range(matrix_size):
-            maxi.dma_read(ram_a, 0, a_addr, matrix_size)
+            ram_a.rebase()
+            inchworm.prefetch_dma_read(maxi, ram_a, a_addr, matrix_size, 8)
 
             b_addr = b_offset
             for j in range(matrix_size):
-                maxi.dma_read(ram_b, 0, b_addr, matrix_size)
+                ram_b.rebase()
+                inchworm.prefetch_dma_read(maxi, ram_b, b_addr, matrix_size, 8)
 
                 sum = 0
                 for k in range(matrix_size):
                     x = ram_a.read(k)
                     y = ram_b.read(k)
+                    ram_a.dequeue(j == matrix_size - 1)
+                    ram_b.dequeue()
                     sum += x * y
                 ram_c.write(j, sum)
 
                 b_addr += matrix_size * (datawidth // 8)
 
-                ram_b.shrink(matrix_size)
-
             maxi.dma_write(ram_c, 0, c_addr, matrix_size)
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
-
-            ram_a.shrink(matrix_size)
 
     th = vthread.Thread(m, 'th_matmul', clk, rst, matmul)
     fsm = th.start()
@@ -212,7 +213,7 @@ def mkTest(memimg_name=None):
     init = simulation.setup_reset(m, rst, m.make_reset(), period=100)
 
     init.add(
-        Delay(1000000),
+        Delay(2000000),
         Systask('finish'),
     )
 

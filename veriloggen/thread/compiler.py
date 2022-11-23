@@ -164,36 +164,32 @@ def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: list[str]) -> lis
     return ret
 
 
-def temporary_sub(node: ast.AST) -> None:
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name):
-            pass
-        elif isinstance(node.func, ast.Attribute):
-            if node.func.attr == 'dma_read':
-                if node.keywords:
-                    raise RuntimeError
-                if len(node.args) < 4:
-                    raise RuntimeError
-                node.func = ast.Name(id='print', ctx=ast.Load())
-                node.args = [node.args[2]]
-            elif node.func.attr in ['read', 'write', 'dma_write']:
-                if node.keywords:
-                    raise RuntimeError
-                node.func = ast.Name(id='print', ctx=ast.Load())
-                node.args = []
-        else:
-            raise NotImplementedError
-    else:
-        for n in ast.iter_child_nodes(node):
-            temporary_sub(n)
-
-
 def temporary(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    ret = []
-    for stmt in stmts:
-        copied_stmt = copy.deepcopy(stmt)
-        temporary_sub(copied_stmt)
-        ret.append(copied_stmt)
+    ret: list[ast.stmt] = []
+    for s in stmts:
+        if isinstance(s, (ast.For, ast.While)) or not find_memory_access([s]):
+            ret.append(s)
+    return ret
+
+
+def temporary2(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    ret: list[ast.stmt] = []
+    for s in stmts:
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) and s.value.func.attr == 'dma_read':
+            ret.append(
+                ast.If(
+                    test=ast.Compare(
+                        left=ast.Attribute(value=s.value.args[0], attr='occupancy'),
+                        ops=[ast.Lt()],
+                        comparators=[ast.Attribute(value=s.value.args[0], attr='size')]
+                    ),
+
+                    body=[s],
+                    orelse=[]
+                )
+            )
+        else:
+            ret.append(s)
     return ret
 
 
@@ -552,7 +548,9 @@ class CompileVisitor(ast.NodeVisitor):
         #     print()
         #     print(ast.unparse(renamed_body))
         #     print()
-        #     renamed_body = temporary(renamed_body)
+        #     renamed_body = temporary2(renamed_body)
+        #     print(ast.unparse(renamed_body))
+        #     print()
 
         #     prefetch_iter_node = self.getTmpVariable()
 
@@ -599,6 +597,8 @@ class CompileVisitor(ast.NodeVisitor):
 
         #     # change from prefetch FSM to main FSM
         #     self.fsm = self.main_fsm
+
+        # body = temporary(body)
 
         self.pushScope()
 

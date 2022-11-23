@@ -2,12 +2,11 @@ from veriloggen.core import module
 from veriloggen.core import vtypes
 from veriloggen.fsm.fsm import FSM, TmpFSM
 from veriloggen.seq.seq import Seq
-from .ttypes import _MutexFunction
 from .ram import RAM
 
 
-class Buffet(_MutexFunction):
-    __intrinsics__ = ('fill', 'read', 'update', 'shrink') + _MutexFunction.__intrinsics__
+class Buffet:
+    __intrinsics__ = ('fill', 'read', 'update', 'shrink')
 
     def __init__(
         self,
@@ -26,7 +25,10 @@ class Buffet(_MutexFunction):
         self.ram = RAM(m, name + '_ram', clk, rst, datawidth, addrwidth, numports=2)
         self.head = m.Reg(name + '_head', addrwidth, signed=False, initval=0)
         self.occupancy = m.Reg(name + '_occupancy', addrwidth + 1, signed=False, initval=0)
+        self.lock = m.Reg(name + '_lock', 1, signed=False, initval=0)
         self.seq = Seq(m, name + '_seq', clk, rst)
+
+        self.size = 2**self.addrwidth
 
     def fill(self, fsm: FSM, data: vtypes.IntegralType) -> None:
         # implicit casting works as modulo operation
@@ -55,11 +57,19 @@ class Buffet(_MutexFunction):
 
         # state 0
         fsm(
-            occupancy_reg(self.occupancy),
             length_reg(length),
             done(0)
         )
+        fsm.If(cond, length > 0)(
+            self.lock(1)
+        )
         fsm.If(cond, length > 0).goto_next()
+
+        # state 1
+        fsm(
+            occupancy_reg(self.occupancy)
+        )
+        fsm.goto_next()
 
         wenable = vtypes.Ands(fsm.here, wvalid)
         wready = fsm.here
@@ -67,10 +77,9 @@ class Buffet(_MutexFunction):
         addr = self.head + occupancy_reg
         self.ram.write_rtl(addr, wdata, port=1, cond=wenable)
 
-        # state 1
+        # state 2
         fsm(
-            self.occupancy(occupancy_reg),
-            done(0)
+            self.occupancy(occupancy_reg)
         )
         fsm.If(wvalid)(
             occupancy_reg.inc(),
@@ -78,10 +87,11 @@ class Buffet(_MutexFunction):
         )
         fsm.If(vtypes.Ands(wvalid, vtypes.Ors(length_reg <= 1, wlast))).goto_next()
 
-        # state 2
+        # state 3
         fsm(
             self.occupancy(occupancy_reg),
-            done(1)
+            done(1),
+            self.lock(0)
         )
         fsm.goto_init()
 
@@ -101,7 +111,7 @@ class Buffet(_MutexFunction):
         self.ram.write(fsm, addr, data, port=0)
 
     def shrink(self, fsm: FSM, num: vtypes.IntegralType) -> None:
-        fsm.If(self.occupancy >= num)(
+        fsm.If(vtypes.Not(self.lock), self.occupancy >= num)(
             self.head.add(num),
             self.occupancy.sub(num)
         )

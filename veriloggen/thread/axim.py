@@ -4,6 +4,7 @@ from __future__ import print_function
 import math
 import functools
 from collections import OrderedDict
+import inspect
 
 import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
@@ -13,7 +14,6 @@ from veriloggen.optimizer import try_optimize as optimize
 
 from .ttypes import _MutexFunction
 from .ram import RAM, MultibankRAM, to_multibank_ram
-from .buffet import Buffet
 from .fifo import FIFO
 
 
@@ -148,7 +148,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         self.read_op_id_map: OrderedDict[tuple[int | tuple[int, ...], int, str], int] = OrderedDict()
         self.read_op_id_count: int = 1
-        self.read_ops = []
+        self.read_ops: list[int] = []
 
         self.read_req_fsm = None
         self.read_data_fsm = None
@@ -232,9 +232,9 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             self.write_start(0)
         )
 
-        self.write_op_id_map = OrderedDict()
-        self.write_op_id_count = 1
-        self.write_ops = []
+        self.write_op_id_map: OrderedDict[tuple[int | tuple[int, ...], int, str], int] = OrderedDict()
+        self.write_op_id_count: int = 1
+        self.write_ops: list[int] = []
 
         self.write_req_fsm = None
         self.write_data_fsm = None
@@ -334,20 +334,20 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
     # DMA
     def dma_read(self, fsm: FSM, ram, local_addr, global_addr, local_size,
-                 local_stride=1, port=0):
+                 local_stride=1, port=0, ram_method=None):
 
         local_blocksize = 1
         self._dma_read(fsm, ram, local_addr, global_addr, local_size,
-                       local_stride, local_blocksize, port)
+                       local_stride, local_blocksize, port, ram_method)
 
         self.dma_wait_read(fsm)
 
     def dma_read_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
-                       local_stride=1, port=0):
+                       local_stride=1, port=0, ram_method=None):
 
         local_blocksize = 1
         self._dma_read(fsm, ram, local_addr, global_addr, local_size,
-                       local_stride, local_blocksize, port)
+                       local_stride, local_blocksize, port, ram_method)
 
     def dma_write(self, fsm: FSM, ram, local_addr, global_addr, local_size,
                   local_stride=1, port=0):
@@ -740,9 +740,6 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         if isinstance(ram, (tuple, list)):
             ram = to_multibank_ram(ram)
-
-        if not isinstance(ram, (RAM, MultibankRAM, Buffet)):
-            raise TypeError('RAM, MultibankRAM, or Buffet object is required.')
 
         if ram_method is None:
             if isinstance(ram, (RAM, MultibankRAM)):
@@ -1587,12 +1584,14 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         return flag
 
     def _get_read_op_id(self, ram, port, ram_method):
-
-        ram_id: int | tuple[int, ...] = ram._id()
+        ram_id: int | tuple[int, ...] = ram._id() if hasattr(ram, '_id') else id(ram)
         port: int = vtypes.to_int(port)
-        ram_method_name: str = (ram_method.func.__name__
-                                if isinstance(ram_method, functools.partial) else
-                                ram_method.__name__)
+        if isinstance(ram_method, functools.partial):
+            ram_method_name = ram_method.func.__name__
+        elif inspect.isfunction(ram_method) or inspect.ismethod(ram_method):
+            ram_method_name = ram_method.__name__
+        else:
+            raise TypeError('ram_method must be a partial object, a function, or a method')
         op = (ram_id, port, ram_method_name)
 
         if op in self.read_op_id_map:
@@ -1605,12 +1604,14 @@ class AXIM(axi.AxiMaster, _MutexFunction):
         return op_id
 
     def _get_write_op_id(self, ram, port, ram_method):
-
-        ram_id = ram._id()
-        port = vtypes.to_int(port)
-        ram_method_name = (ram_method.func.__name__
-                           if isinstance(ram_method, functools.partial) else
-                           ram_method.__name__)
+        ram_id: int | tuple[int, ...] = ram._id() if hasattr(ram, '_id') else id(ram)
+        port: int = vtypes.to_int(port)
+        if isinstance(ram_method, functools.partial):
+            ram_method_name = ram_method.func.__name__
+        elif inspect.isfunction(ram_method) or inspect.ismethod(ram_method):
+            ram_method_name = ram_method.__name__
+        else:
+            raise TypeError('ram_method must be a partial object, a function, or a method')
         op = (ram_id, port, ram_method_name)
 
         if op in self.write_op_id_map:

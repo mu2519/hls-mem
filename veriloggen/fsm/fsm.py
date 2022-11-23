@@ -41,8 +41,17 @@ def TmpFSM(m, clk, rst, width=32, initname='init',
 class FSM(vtypes.VeriloggenNode):
     """ Finite State Machine Generator """
 
-    def __init__(self, m, name, clk, rst, width=32, initname='init',
-                 nohook=False, as_module=False):
+    def __init__(
+        self,
+        m: Module,
+        name: str,
+        clk: vtypes._Variable,
+        rst: vtypes._Variable,
+        width: int = 32,
+        initname: str = 'init',
+        nohook: bool = False,
+        as_module: bool = False
+    ):
         self.m = m
         self.name = name
         self.clk = clk
@@ -51,7 +60,7 @@ class FSM(vtypes.VeriloggenNode):
         self.state_count = 0
         self.state = self.m.Reg(name, width)  # set initval later
 
-        self.mark = collections.OrderedDict()  # key:index
+        self.mark: collections.OrderedDict[int, vtypes.Localparam] = collections.OrderedDict()  # key:index
         self._set_mark(0, self.name + '_' + initname)
         self.state.initval = self._get_mark(0)
 
@@ -891,7 +900,7 @@ class FSM(vtypes.VeriloggenNode):
         return ret
 
     # -------------------------------------------------------------------------
-    def _set_index(self, index=None):
+    def _set_index(self, index: int | None = None):
         self._clear_next_kwargs()
         self._clear_last_if_statement()
         self._clear_last_cond()
@@ -904,14 +913,14 @@ class FSM(vtypes.VeriloggenNode):
         self.state_count = index
         return self.state_count
 
-    def _get_mark(self, index=None):
+    def _get_mark(self, index: int | None = None):
         if index is None:
             index = self.state_count
         if index not in self.mark:
             raise KeyError("No such index in FSM marks: %s" % index)
         return self.mark[index]
 
-    def _set_mark(self, index=None, name=None):
+    def _set_mark(self, index: int | None = None, name: str | None = None):
         if index is None:
             index = self.state_count
         if name is None:
