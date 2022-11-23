@@ -26,7 +26,7 @@ _tmp_count = 0
 
 
 memory_access_func: list[str] = []
-memory_access_method: list[str] = ["dma_read"]
+memory_access_method: list[str] = ['prefetch_dma_read']
 
 
 def find_memory_access_sub(node: ast.AST) -> bool:
@@ -168,27 +168,6 @@ def temporary(stmts: list[ast.stmt]) -> list[ast.stmt]:
     ret: list[ast.stmt] = []
     for s in stmts:
         if isinstance(s, (ast.For, ast.While)) or not find_memory_access([s]):
-            ret.append(s)
-    return ret
-
-
-def temporary2(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    ret: list[ast.stmt] = []
-    for s in stmts:
-        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) and s.value.func.attr == 'dma_read':
-            ret.append(
-                ast.If(
-                    test=ast.Compare(
-                        left=ast.Attribute(value=s.value.args[0], attr='occupancy'),
-                        ops=[ast.Lt()],
-                        comparators=[ast.Attribute(value=s.value.args[0], attr='size')]
-                    ),
-
-                    body=[s],
-                    orelse=[]
-                )
-            )
-        else:
             ret.append(s)
     return ret
 
@@ -523,91 +502,88 @@ class CompileVisitor(ast.NodeVisitor):
                        iter_node, cond_node, update_node, body: list[ast.stmt],
                        target_update: tuple[Any, Any] | None = None):
 
-        # # this variable enables communication between main FSM and prefetch FSM
-        # flag = self.getTmpVariable()
+        # this variable enables communication between main FSM and prefetch FSM
+        flag = self.getTmpVariable()
 
-        # filtered_body = filter_loop(body)
-        # if find_memory_access(filtered_body):
-        #     def isbound(var: str) -> bool:
-        #         try:
-        #             self.getVariable(var)
-        #         except NameError:
-        #             return False
-        #         return True
+        filtered_body = filter_loop(body)
+        if find_memory_access(filtered_body):
+            def isbound(var: str) -> bool:
+                try:
+                    self.getVariable(var)
+                except NameError:
+                    return False
+                return True
 
-        #     prefetch_suffix = ['prefetch', str(self.prefetch_count)]
-        #     prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
-        #     self.prefetch_count += 1
+            prefetch_suffix = ['prefetch', str(self.prefetch_count)]
+            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
+            self.prefetch_count += 1
 
-        #     modified_vars = get_vars(body, "store")
-        #     prefetch_body = filter_mem_rel_stmts(filtered_body)
-        #     renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
-        #     print(ast.unparse(filtered_body))
-        #     print()
-        #     print(ast.unparse(prefetch_body))
-        #     print()
-        #     print(ast.unparse(renamed_body))
-        #     print()
-        #     renamed_body = temporary2(renamed_body)
-        #     print(ast.unparse(renamed_body))
-        #     print()
+            modified_vars = get_vars(body, "store")
+            prefetch_body = filter_mem_rel_stmts(filtered_body)
+            renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
+            print(ast.unparse(filtered_body))
+            print()
+            print(ast.unparse(prefetch_body))
+            print()
+            print(ast.unparse(renamed_body))
+            print()
 
-        #     prefetch_iter_node = self.getTmpVariable()
+            prefetch_iter_node = self.getTmpVariable()
 
-        #     # change from main FSM to prefetch FSM
-        #     self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
-        #     self.fsm = self.prefetch_fsm
+            # change from main FSM to prefetch FSM
+            self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
+            self.fsm = self.prefetch_fsm
 
-        #     self.pushScope()
+            self.pushScope()
 
-        #     # initialize
-        #     prefetch_idle_count = self.getFsmCount()
-        #     self.incFsmCount()
-        #     prefetch_active_count = self.getFsmCount()
-        #     copied_vars = list(filter(isbound, modified_vars))
-        #     if copied_vars:
-        #         self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
-        #     self.setBind(prefetch_iter_node, begin_node)
-        #     self.setFsm()
-        #     self.incFsmCount()
+            # initialize
+            prefetch_idle_count = self.getFsmCount()
+            self.incFsmCount()
+            prefetch_active_count = self.getFsmCount()
+            copied_vars = list(filter(isbound, modified_vars))
+            if copied_vars:
+                self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
+            self.setBind(prefetch_iter_node, begin_node)
+            self.setFsm()
+            self.incFsmCount()
 
-        #     # condition check
-        #     prefetch_check_count = self.getFsmCount()
-        #     self.incFsmCount()
-        #     prefetch_body_begin_count = self.getFsmCount()
+            # condition check
+            prefetch_check_count = self.getFsmCount()
+            self.incFsmCount()
+            prefetch_body_begin_count = self.getFsmCount()
 
-        #     # body
-        #     for b in renamed_body:
-        #         self.visit(b)
+            # body
+            for b in renamed_body:
+                self.visit(b)
 
-        #     self.popScope()
+            self.popScope()
 
-        #     prefetch_body_end_count = self.getFsmCount()
+            prefetch_body_end_count = self.getFsmCount()
 
-        #     # update
-        #     self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
-        #     self.incFsmCount()
-        #     prefetch_loop_exit_count = self.getFsmCount()
+            # update
+            self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
+            self.incFsmCount()
+            prefetch_loop_exit_count = self.getFsmCount()
 
-        #     self.setFsm(prefetch_body_end_count, prefetch_check_count)
-        #     self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
+            self.setFsm(prefetch_body_end_count, prefetch_check_count)
+            self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
 
-        #     self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
-        #     self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+            self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
+            self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
 
-        #     # change from prefetch FSM to main FSM
-        #     self.fsm = self.main_fsm
+            # change from prefetch FSM to main FSM
+            self.fsm = self.main_fsm
 
-        # body = temporary(body)
+        body = temporary(body)
 
         self.pushScope()
 
-        # self.setBind(flag, vtypes.Int(1))
-        # self.setFsm()
-        # self.incFsmCount()
-        # self.setBind(flag, vtypes.Int(0))
-        # self.setFsm()
-        # self.incFsmCount()
+        self.setBind(flag, vtypes.Int(1))
+        self.setFsm()
+        self.incFsmCount()
+        self.setBind(flag, vtypes.Int(0))
+        self.setFsm()
+        self.incFsmCount()
 
         # initialize
         self.setBind(iter_node, begin_node)

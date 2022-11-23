@@ -198,7 +198,9 @@ def prefetch_dma_read(fsm: FSM, axi: AXIM, ram: Inchworm, global_addr, region_si
     fsm.inc()
     loop_body_begin_count = fsm.current
     fsm.If(ram.vacancy >= next_transfer_size).goto_next()
+    axi.lock(fsm)
     axi.dma_read(fsm, ram, 0, addr, next_transfer_size, ram_method=ram.enqueue_for_dma)
+    axi.unlock(fsm)
     loop_body_end_count = fsm.current
     fsm(
         addr.add(block_size_in_bytes),

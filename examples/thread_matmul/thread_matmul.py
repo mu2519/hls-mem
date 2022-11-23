@@ -27,9 +27,9 @@ def mkLed():
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
-    addrwidth = 10
-    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth + 1)
-    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth + 1)
+    addrwidth = 4
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth)
+    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth)
     ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
@@ -213,7 +213,7 @@ def mkTest(memimg_name=None):
     init = simulation.setup_reset(m, rst, m.make_reset(), period=100)
 
     init.add(
-        Delay(2000000),
+        Delay(1000000),
         Systask('finish'),
     )
 
