@@ -6,8 +6,9 @@ import ast
 import inspect
 import textwrap
 from collections import OrderedDict
-from collections.abc import Sequence, Mapping
-from typing import Literal, Any, Callable
+from collections.abc import Sequence
+from typing import Literal, Any
+from types import FunctionType, MethodType
 
 from veriloggen.fsm.fsm import FSM
 import veriloggen.core.vtypes as vtypes
@@ -227,9 +228,9 @@ class FunctionVisitor(ast.NodeVisitor):
 class CompileVisitor(ast.NodeVisitor):
 
     def __init__(self, m, name: str, clk, rst, fsm,
-                 functions: Mapping[str, ast.FunctionDef],
-                 intrinsic_functions: Mapping[str, Callable],
-                 intrinsic_methods: Mapping[str, Callable],
+                 functions: dict[str, ast.FunctionDef],
+                 intrinsic_functions: dict[str, FunctionType],
+                 intrinsic_methods: dict[str, MethodType],
                  start_frame,
                  datawidth=32, point=16):
 

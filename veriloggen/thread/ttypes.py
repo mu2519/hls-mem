@@ -77,14 +77,14 @@ def signed(fsm, value):
     return vtypes.Signed(value)
 
 
-def embedded_code(fsm, *codes):
-    codes = [code.value if isinstance(code, vtypes.Str) else code
-             for code in codes]
+def embedded_code(fsm, *codes: str | vtypes.Str):
+    codes: tuple[str, ...] = [code.value if isinstance(code, vtypes.Str) else code
+                              for code in codes]
     code = '\n'.join(codes)
     statement(fsm, vtypes.EmbeddedCode(code))
 
 
-def embedded_numeric(fsm, code):
+def embedded_numeric(fsm, code: str | vtypes.Str):
     return vtypes.EmbeddedNumeric(code)
 
 

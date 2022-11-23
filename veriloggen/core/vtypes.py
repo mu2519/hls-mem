@@ -994,7 +994,7 @@ class Float(_Constant):
 
 class Str(_Constant):
 
-    def __init__(self, value):
+    def __init__(self, value: str):
         _Constant.__init__(self, value, None, None)
         self.value = value
 
@@ -2347,7 +2347,7 @@ class SingleStatement(VeriloggenNode):
 
 class EmbeddedCode(VeriloggenNode):
 
-    def __init__(self, code):
+    def __init__(self, code: str | Str):
         VeriloggenNode.__init__(self)
         code = raw_value(code)
         self.code = code
@@ -2355,7 +2355,7 @@ class EmbeddedCode(VeriloggenNode):
 
 class EmbeddedNumeric(EmbeddedCode, _Numeric):
 
-    def __init__(self, code):
+    def __init__(self, code: str | Str):
         EmbeddedCode.__init__(self, code)
 
 

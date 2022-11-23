@@ -586,7 +586,7 @@ class Module(vtypes.VeriloggenNode):
         return t
 
     # -------------------------------------------------------------------------
-    def EmbeddedCode(self, code):
+    def EmbeddedCode(self, code: str | vtypes.Str):
 
         t = vtypes.EmbeddedCode(code)
         self.items.append(t)

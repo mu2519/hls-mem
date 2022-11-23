@@ -4,6 +4,7 @@ import ast
 import inspect
 import textwrap
 from collections import OrderedDict
+from types import FunctionType, MethodType
 
 import veriloggen.core.vtypes as vtypes
 from veriloggen.fsm.fsm import FSM
@@ -46,8 +47,8 @@ class Thread(vtypes.VeriloggenNode):
         self.fsm_as_module = fsm_as_module
 
         self.function_lib = OrderedDict()
-        self.intrinsic_functions = OrderedDict()
-        self.intrinsic_methods = OrderedDict()
+        self.intrinsic_functions: OrderedDict[str, FunctionType] = OrderedDict()
+        self.intrinsic_methods: OrderedDict[str, MethodType] = OrderedDict()
 
         self.fsm = None
         self.is_child = False
@@ -182,7 +183,7 @@ class Thread(vtypes.VeriloggenNode):
         self.function_lib[name] = func
         return func
 
-    def add_intrinsics(self, *funcs):
+    def add_intrinsics(self, *funcs: FunctionType | MethodType):
         for func in funcs:
             self.intrinsic(func)
 
@@ -191,14 +192,14 @@ class Thread(vtypes.VeriloggenNode):
                  if name.startswith(prefix)]
         self.add_intrinsics(*funcs)
 
-    def intrinsic(self, func):
+    def intrinsic(self, func: FunctionType | MethodType):
         if inspect.isfunction(func):
             return self._add_intrinsic_function(func)
         if inspect.ismethod(func):
             return self._add_intrinsic_method(func)
         raise TypeError("'%s' object is not supported" % str(type(func)))
 
-    def _add_intrinsic_function(self, func):
+    def _add_intrinsic_function(self, func: FunctionType):
         name = func.__name__
         if name in self.intrinsic_functions:
             raise ValueError(
@@ -206,7 +207,7 @@ class Thread(vtypes.VeriloggenNode):
         self.intrinsic_functions[name] = func
         return func
 
-    def _add_intrinsic_method(self, func):
+    def _add_intrinsic_method(self, func: MethodType):
         name = str(func)
         if name in self.intrinsic_methods:
             raise ValueError(
