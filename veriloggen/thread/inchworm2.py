@@ -300,6 +300,11 @@ class Inchworm:
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_read_addr')  # address in bytes
         size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
 
+        # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
+        # otherwise, transfer the data whose size is equal to the block size
+        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_read_next_transfer_size')
+        next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
+
         fsm(
             addr(global_addr),
             size(local_size)
@@ -309,14 +314,14 @@ class Inchworm:
         loop_cond_check_count = fsm.current
         fsm.inc()
         loop_body_begin_count = fsm.current
-        fsm.If(self.vacancy >= block_size_in_words).goto_next()
+        fsm.If(self.vacancy >= next_transfer_size).goto_next()
         axi.lock(fsm)
-        axi.dma_read(fsm, self, 0, addr, block_size_in_words, ram_method=self.enqueue_for_dma)
+        axi.dma_read(fsm, self, 0, addr, next_transfer_size, ram_method=self.enqueue_for_dma)
         axi.unlock(fsm)
         loop_body_end_count = fsm.current
         fsm(
             addr.add(block_size_in_bytes),
-            size.sub(block_size_in_words)
+            size.sub(next_transfer_size)
         )
         fsm.inc()
         loop_exit_count = fsm.current
@@ -347,6 +352,11 @@ class Inchworm:
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_write_addr')  # address in bytes
         size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
 
+        # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
+        # otherwise, transfer the data whose size is equal to the block size
+        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_write_next_transfer_size')
+        next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
+
         fsm(
             addr(global_addr),
             size(local_size)
@@ -357,16 +367,16 @@ class Inchworm:
         fsm.inc()
         loop_body_begin_count = fsm.current
         if self.mode == 'wo':
-            fsm.If(self.occupancy >= block_size_in_words).goto_next()
+            fsm.If(self.occupancy >= next_transfer_size).goto_next()
         else:
-            fsm.If(self.occupancy[0] >= block_size_in_words).goto_next()
+            fsm.If(self.occupancy[0] >= next_transfer_size).goto_next()
         axi.lock(fsm)
-        axi.dma_write(fsm, self, 0, addr, block_size_in_words, ram_method=self.dequeue_for_dma)
+        axi.dma_write(fsm, self, 0, addr, next_transfer_size, ram_method=self.dequeue_for_dma)
         axi.unlock(fsm)
         loop_body_end_count = fsm.current
         fsm(
             addr.add(block_size_in_bytes),
-            size.sub(block_size_in_words)
+            size.sub(next_transfer_size)
         )
         fsm.inc()
         loop_exit_count = fsm.current
