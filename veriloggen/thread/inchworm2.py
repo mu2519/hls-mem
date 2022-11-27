@@ -4,12 +4,12 @@ from veriloggen.core import module
 from veriloggen.core import vtypes
 from veriloggen.seq.seq import Seq, make_condition
 from veriloggen.fsm.fsm import FSM, TmpFSM
+from .axim import AXIM
 from .ram import RAM
 
 
-# TODO: mutex for enqueue and dequeue (avoid memory port collision)
 class Inchworm:
-    __intrinsics__ = ('dequeue', 'release', 'enqueue', 'read', 'write', 'rebase')
+    __intrinsics__ = ('dequeue', 'release', 'enqueue', 'read', 'write', 'rebase', 'dma_read', 'dma_write')
 
     def __init__(
         self,
@@ -106,10 +106,12 @@ class Inchworm:
 
     @property
     def vacancy(self):
-        if self.mode == 'rw':
-            return self.size - self.occupancy[1]
-        else:
+        if self.mode == 'ro':
             return self.size - self.occupancy
+        elif self.mode == 'wo':
+            raise ValueError('Write-only mode does not have this property')
+        else:
+            return self.size - self.occupancy[1]
 
     def dequeue(self, fsm: FSM) -> vtypes.Reg:
         if self.mode == 'ro':
@@ -275,13 +277,79 @@ class Inchworm:
         else:
             tgt.assign_value.statement.right = vtypes.Lor(cond, tgt.assign_value.statement.right)
 
+    def dma_read(self, fsm: FSM, axi: AXIM, global_addr, local_size, block_size) -> None:
+        if self.mode == 'wo':
+            raise ValueError('Write-only mode does not support this operation')
 
-__intrinsics__ = ('prefetch_dma_read', 'prefetch_dma_write')
+        if not isinstance(axi, AXIM):
+            raise TypeError
 
+        block_size_in_words = block_size
+        block_size_in_bytes = block_size * (self.datawidth // 8)
 
-def prefetch_dma_read(fsm: FSM):
-    pass
+        addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_read_addr')  # address in bytes
+        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
 
+        fsm(
+            addr(global_addr),
+            size(local_size)
+        )
+        fsm.goto_next()
 
-def prefetch_dma_write(fsm: FSM):
-    pass
+        loop_cond_check_count = fsm.current
+        fsm.inc()
+        loop_body_begin_count = fsm.current
+        fsm.If(self.vacancy >= block_size_in_words).goto_next()
+        axi.lock(fsm)
+        axi.dma_read(fsm, self, 0, addr, block_size_in_words, ram_method=self.enqueue_for_dma)
+        axi.unlock(fsm)
+        loop_body_end_count = fsm.current
+        fsm(
+            addr.add(block_size_in_bytes),
+            size.sub(block_size_in_words)
+        )
+        fsm.inc()
+        loop_exit_count = fsm.current
+
+        fsm.goto_from(loop_body_end_count, loop_cond_check_count)
+        fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)
+
+    def dma_write(self, fsm: FSM, axi: AXIM, global_addr, local_size, block_size):
+        if self.mode == 'ro':
+            raise ValueError('Read-only mode does not support this operation')
+
+        if not isinstance(axi, AXIM):
+            raise TypeError
+
+        block_size_in_words = block_size
+        block_size_in_bytes = block_size * (self.datawidth // 8)
+
+        addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_write_addr')  # address in bytes
+        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
+
+        fsm(
+            addr(global_addr),
+            size(local_size)
+        )
+        fsm.goto_next()
+
+        loop_cond_check_count = fsm.current
+        fsm.inc()
+        loop_body_begin_count = fsm.current
+        if self.mode == 'wo':
+            fsm.If(self.occupancy >= block_size_in_words).goto_next()
+        else:
+            fsm.If(self.occupancy[0] >= block_size_in_words).goto_next()
+        axi.lock(fsm)
+        axi.dma_write(fsm, self, 0, addr, block_size_in_words, ram_method=self.dequeue_for_dma)
+        axi.unlock(fsm)
+        loop_body_end_count = fsm.current
+        fsm(
+            addr.add(block_size_in_bytes),
+            size.sub(block_size_in_words)
+        )
+        fsm.inc()
+        loop_exit_count = fsm.current
+
+        fsm.goto_from(loop_body_end_count, loop_cond_check_count)
+        fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)

@@ -53,12 +53,12 @@ def mkLed():
 
         for i in range(matrix_size):
             ram_a.rebase()
-            maxi.dma_read(ram_a, 0, a_addr, matrix_size, ram_method=ram_a.enqueue_for_dma)
+            ram_a.dma_read(maxi, a_addr, matrix_size, 2)
 
             b_addr = b_offset
             for j in range(matrix_size):
                 ram_b.rebase()
-                maxi.dma_read(ram_b, 0, b_addr, matrix_size, ram_method=ram_b.enqueue_for_dma)
+                ram_b.dma_read(maxi, b_addr, matrix_size, 2)
 
                 sum = 0
                 for k in range(matrix_size):
@@ -75,7 +75,7 @@ def mkLed():
                 b_addr += matrix_size * (datawidth // 8)
 
             ram_c.rebase()
-            maxi.dma_write(ram_c, 0, c_addr, matrix_size, ram_method=ram_c.dequeue_for_dma)
+            ram_c.dma_write(maxi, c_addr, matrix_size, 2)
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
 

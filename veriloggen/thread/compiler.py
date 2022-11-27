@@ -27,7 +27,7 @@ _tmp_count = 0
 
 
 memory_access_func: list[str] = []
-memory_access_method: list[str] = ['prefetch_dma_read', 'prefetch_dma_write']
+memory_access_method: list[str] = ['dma_read', 'dma_write']
 
 
 def find_memory_access_sub(node: ast.AST) -> bool:
