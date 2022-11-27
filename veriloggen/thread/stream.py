@@ -1,26 +1,20 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
 import math
 import functools
-import ast
-import inspect
-import textwrap
 from collections import OrderedDict
 
+import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
 import veriloggen.types.util as util
 from veriloggen.seq.seq import make_condition
 from veriloggen.fsm.fsm import FSM
-from veriloggen.seq.seq import Seq
+import veriloggen.stream.stypes as stypes
 from veriloggen.stream.stream import Stream as BaseStream
 from veriloggen.stream.stypes import Substream as BaseSubstream
 from veriloggen.stream.stypes import SubstreamMultiCycle as BaseSubstreamMultiCycle
 from veriloggen.stream.stypes import _and_vars
 
 from . import compiler
-from . import thread
 
 mode_width = 5
 mode_idle = vtypes.Int(0, mode_width, base=2)
@@ -73,7 +67,8 @@ class Stream(BaseStream):
 
     ram_delay = 0
 
-    def __init__(self, m, name, clk, rst,
+    def __init__(self, m: module.Module, name: str,
+                 clk: vtypes._Variable, rst: vtypes._Variable,
                  infinite=False,
                  datawidth=32, addrwidth=32,
                  max_pattern_length=4, max_multipattern_length=2,
@@ -138,8 +133,8 @@ class Stream(BaseStream):
         self.is_root = self.module.Wire('_'.join(['', self.name, 'is_root']))
         self.is_root.assign(1)
 
-        self.sources = OrderedDict()
-        self.sinks = OrderedDict()
+        self.sources: OrderedDict[str, stypes._Numeric] = OrderedDict()
+        self.sinks: OrderedDict[str, stypes._Numeric] = OrderedDict()
         self.parameters = OrderedDict()
         self.substreams = []
         self.read_rams = OrderedDict()
@@ -148,14 +143,14 @@ class Stream(BaseStream):
         self.read_fifos = OrderedDict()
         self.write_fifos = OrderedDict()
 
-        self.var_name_map = OrderedDict()
-        self.var_id_map = OrderedDict()
-        self.var_id_name_map = OrderedDict()
-        self.var_name_id_map = OrderedDict()
+        self.var_name_map: OrderedDict[str, stypes._Numeric] = OrderedDict()
+        self.var_id_map: OrderedDict[int, stypes._Numeric] = OrderedDict()
+        self.var_id_name_map: OrderedDict[int, str] = OrderedDict()
+        self.var_name_id_map: OrderedDict[str, int] = OrderedDict()
         self.var_id_count = 0
 
-        self.source_idle_map = OrderedDict()
-        self.sink_when_map = OrderedDict()
+        self.source_idle_map: OrderedDict[str, vtypes.Reg] = OrderedDict()
+        self.sink_when_map: OrderedDict[str, stypes._Numeric] = OrderedDict()
 
         self.reduce_reset = None
         self.terminates = []
@@ -165,7 +160,7 @@ class Stream(BaseStream):
 
         self.fsm_id_count = 0
 
-    def source(self, name=None, datawidth=None, point=0, signed=True, no_ctrl=False):
+    def source(self, name: str | None = None, datawidth: int | None = None, point=0, signed=True, no_ctrl=False):
         if self.stream_synthesized:
             raise ValueError(
                 'cannot modify the stream because already synthesized')
@@ -185,7 +180,7 @@ class Stream(BaseStream):
         if datawidth is None:
             datawidth = self.datawidth
 
-        var = self.Variable(self._dataname(name), datawidth, point, signed)
+        var: stypes._Variable = self.Variable(self._dataname(name), datawidth, point, signed)
 
         if no_ctrl:
             return var
@@ -288,7 +283,7 @@ class Stream(BaseStream):
 
         return var
 
-    def sink(self, data, name=None, when=None, when_name=None):
+    def sink(self, data: stypes._Numeric, name: str | None = None, when: stypes._Numeric | None = None, when_name: str | None = None):
         if self.stream_synthesized:
             raise ValueError(
                 'cannot modify the stream because already synthesized')
@@ -692,12 +687,14 @@ class Stream(BaseStream):
 
         return var
 
-    def set_source(self, fsm, name, ram, offset, size, stride=1, port=0):
+    # `name` is actually name (string) or ID (integer)
+    def set_source(self, fsm: FSM, name: vtypes.StrLike | vtypes.IntLike, ram, offset, size, stride=1, port=0):
         """ intrinsic method to assign RAM property to a source stream """
         self._set_source(fsm, name, ram, offset, size, stride, port)
         fsm.goto_next()
 
-    def _set_source(self, fsm, name, ram, offset, size, stride=1, port=0):
+    # `name` is actually name (string) or ID (integer)
+    def _set_source(self, fsm: FSM, name: vtypes.StrLike | vtypes.IntLike, ram, offset, size, stride=1, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -730,12 +727,12 @@ class Stream(BaseStream):
         self._setup_source_ram(ram, var, port, set_cond)
         self._synthesize_set_source(var, name)
 
-    def set_source_pattern(self, fsm, name, ram, offset, pattern, port=0):
+    def set_source_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
         """ intrinsic method to assign RAM property to a source stream """
         self._set_source_pattern(fsm, name, ram, offset, pattern, port)
         fsm.goto_next()
 
-    def _set_source_pattern(self, fsm, name, ram, offset, pattern, port=0):
+    def _set_source_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -795,24 +792,24 @@ class Stream(BaseStream):
         self._setup_source_ram(ram, var, port, set_cond)
         self._synthesize_set_source_pattern(var, name)
 
-    def set_source_multidim(self, fsm, name, ram, offset, shape, order=None, port=0):
+    def set_source_multidim(self, fsm: FSM, name, ram, offset, shape, order=None, port=0):
         """ intrinsic method to assign RAM property to a source stream """
         self._set_source_multidim(fsm, name, ram, offset, shape, order, port)
         fsm.goto_next()
 
-    def _set_source_multidim(self, fsm, name, ram, offset, shape, order=None, port=0):
+    def _set_source_multidim(self, fsm: FSM, name, ram, offset, shape, order=None, port=0):
         if order is None:
             order = list(reversed(range(len(shape))))
 
         pattern = self._to_pattern(shape, order)
         self._set_source_pattern(fsm, name, ram, offset, pattern, port)
 
-    def set_source_multipattern(self, fsm, name, ram, offsets, patterns, port=0):
+    def set_source_multipattern(self, fsm: FSM, name, ram, offsets, patterns, port=0):
         """ intrinsic method to assign multiple patterns to a RAM """
         self._set_source_multipattern(fsm, name, ram, offsets, patterns, port)
         fsm.goto_next()
 
-    def _set_source_multipattern(self, fsm, name, ram, offsets, patterns, port=0):
+    def _set_source_multipattern(self, fsm: FSM, name, ram, offsets, patterns, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -900,12 +897,12 @@ class Stream(BaseStream):
         self._setup_source_ram(ram, var, port, set_cond)
         self._synthesize_set_source_multipattern(var, name)
 
-    def set_source_generator(self, fsm, name, ram, func, initvals, args=(), port=0):
+    def set_source_generator(self, fsm: FSM, name, ram, func, initvals, args=(), port=0):
         """ intrinsic method to assign address generator function to a source stream """
         self._set_source_generator(fsm, name, ram, func, initvals, args, port)
         fsm.goto_next()
 
-    def _set_source_generator(self, fsm, name, ram, func, initvals, args=(), port=0):
+    def _set_source_generator(self, fsm: FSM, name, ram, func, initvals, args=(), port=0):
         if not isinstance(initvals, (tuple, list)):
             raise TypeError('initvals be 1 tuple or list.')
 
@@ -940,12 +937,12 @@ class Stream(BaseStream):
         self._setup_source_ram(ram, var, port, set_cond)
         self._synthesize_set_source_generator(var, name, func, initvals, args)
 
-    def set_source_fifo(self, fsm, name, fifo, size):
+    def set_source_fifo(self, fsm: FSM, name, fifo, size):
         """ intrinsic method to assign FIFO property to a source stream """
         self._set_source_fifo(fsm, name, fifo, size)
         fsm.goto_next()
 
-    def _set_source_fifo(self, fsm, name, fifo, size):
+    def _set_source_fifo(self, fsm: FSM, name, fifo, size):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -975,11 +972,11 @@ class Stream(BaseStream):
         self._setup_source_fifo(fifo, var, set_cond)
         self._synthesize_set_source_fifo(var, name)
 
-    def set_source_empty(self, fsm, name, value=0):
+    def set_source_empty(self, fsm: FSM, name, value=0):
         self._set_source_empty(fsm, name, value)
         fsm.goto_next()
 
-    def _set_source_empty(self, fsm, name, value=0):
+    def _set_source_empty(self, fsm: FSM, name, value=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1023,12 +1020,12 @@ class Stream(BaseStream):
 
         var.has_source_empty = True
 
-    def set_sink(self, fsm, name, ram, offset, size, stride=1, port=0):
+    def set_sink(self, fsm: FSM, name, ram, offset, size, stride=1, port=0):
         """ intrinsic method to assign RAM property to a sink stream """
         self._set_sink(fsm, name, ram, offset, size, stride, port)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink(self, fsm, name, ram, offset, size, stride=1, port=0):
+    def _set_sink(self, fsm: FSM, name, ram, offset, size, stride=1, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1065,12 +1062,12 @@ class Stream(BaseStream):
         self._setup_sink_ram(ram, var, port, set_cond)
         self._synthesize_set_sink(var, name)
 
-    def set_sink_pattern(self, fsm, name, ram, offset, pattern, port=0):
+    def set_sink_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
         """ intrinsic method to assign RAM property to a sink stream """
         self._set_sink_pattern(fsm, name, ram, offset, pattern, port)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_pattern(self, fsm, name, ram, offset, pattern, port=0):
+    def _set_sink_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1136,24 +1133,24 @@ class Stream(BaseStream):
         self._setup_sink_ram(ram, var, port, set_cond)
         self._synthesize_set_sink_pattern(var, name)
 
-    def set_sink_multidim(self, fsm, name, ram, offset, shape, order=None, port=0):
+    def set_sink_multidim(self, fsm: FSM, name, ram, offset, shape, order=None, port=0):
         """ intrinsic method to assign RAM property to a sink stream """
         self._set_sink_multidim(fsm, name, ram, offset, shape, order, port)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_multidim(self, fsm, name, ram, offset, shape, order=None, port=0):
+    def _set_sink_multidim(self, fsm: FSM, name, ram, offset, shape, order=None, port=0):
         if order is None:
             order = list(reversed(range(len(shape))))
 
         pattern = self._to_pattern(shape, order)
         self._set_sink_pattern(fsm, name, ram, offset, pattern, port)
 
-    def set_sink_multipattern(self, fsm, name, ram, offsets, patterns, port=0):
+    def set_sink_multipattern(self, fsm: FSM, name, ram, offsets, patterns, port=0):
         """ intrinsic method to assign multiple patterns to a RAM """
         self._set_sink_multipattern(fsm, name, ram, offsets, patterns, port)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_multipattern(self, fsm, name, ram, offsets, patterns, port=0):
+    def _set_sink_multipattern(self, fsm: FSM, name, ram, offsets, patterns, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1249,12 +1246,12 @@ class Stream(BaseStream):
         self._setup_sink_ram(ram, var, port, set_cond)
         self._synthesize_set_sink_multipattern(var, name)
 
-    def set_sink_generator(self, fsm, name, ram, func, initvals, args=(), port=0):
+    def set_sink_generator(self, fsm: FSM, name, ram, func, initvals, args=(), port=0):
         """ intrinsic method to assign address generator function to a sink stream """
         self._set_sink_generator(fsm, name, ram, func, initvals, args, port)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_generator(self, fsm, name, ram, func, initvals, args=(), port=0):
+    def _set_sink_generator(self, fsm: FSM, name, ram, func, initvals, args=(), port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1291,12 +1288,12 @@ class Stream(BaseStream):
         self._setup_sink_ram(ram, var, port, set_cond)
         self._synthesize_set_sink_generator(var, name, func, initvals, args)
 
-    def set_sink_fifo(self, fsm, name, fifo, size):
+    def set_sink_fifo(self, fsm: FSM, name, fifo, size):
         """ intrinsic method to assign FIFO property to a sink stream """
         self._set_sink_fifo(fsm, name, fifo, size)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_fifo(self, fsm, name, fifo, size):
+    def _set_sink_fifo(self, fsm: FSM, name, fifo, size):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1328,12 +1325,12 @@ class Stream(BaseStream):
         self._setup_sink_fifo(fifo, var, set_cond)
         self._synthesize_set_sink_fifo(var, name)
 
-    def set_sink_immediate(self, fsm, name, size):
+    def set_sink_immediate(self, fsm: FSM, name, size):
         """ intrinsic method to set a sink stream as an immediate variable """
         self._set_sink_immediate(fsm, name, size)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_immediate(self, fsm, name, size):
+    def _set_sink_immediate(self, fsm: FSM, name, size):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1370,12 +1367,12 @@ class Stream(BaseStream):
 
         self._synthesize_set_sink_immediate(var, name)
 
-    def set_sink_empty(self, fsm, name):
+    def set_sink_empty(self, fsm: FSM, name):
         """ intrinsic method to assign RAM property to a sink stream """
         self._set_sink_empty(fsm, name)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_empty(self, fsm, name):
+    def _set_sink_empty(self, fsm: FSM, name):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1403,12 +1400,12 @@ class Stream(BaseStream):
             ram_sel(0)  # '0' is reserved for empty
         )
 
-    def set_parameter(self, fsm, name, value, raw=False):
+    def set_parameter(self, fsm: FSM, name, value, raw=False):
         """ intrinsic method to assign parameter value to a parameter stream """
         self._set_parameter(fsm, name, value, raw)
         fsm.goto_next()
 
-    def _set_parameter(self, fsm, name, value, raw=False):
+    def _set_parameter(self, fsm: FSM, name, value, raw=False):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1441,12 +1438,12 @@ class Stream(BaseStream):
             var.write(var.next_parameter_data, self.source_start)
             var.has_parameter_data = True
 
-    def set_read_RAM(self, fsm, name, ram, port=0):
+    def set_read_RAM(self, fsm: FSM, name, ram, port=0):
         """ intrinsic method to assign RAM property to a read_RAM interface """
         self._set_read_RAM(fsm, name, ram, port)
         fsm.goto_next()
 
-    def _set_read_RAM(self, fsm, name, ram, port=0):
+    def _set_read_RAM(self, fsm: FSM, name, ram, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1471,12 +1468,12 @@ class Stream(BaseStream):
         port = vtypes.to_int(port)
         self._setup_read_ram(ram, var, port, set_cond)
 
-    def set_write_RAM(self, fsm, name, ram, port=0):
+    def set_write_RAM(self, fsm: FSM, name, ram, port=0):
         """ intrinsic method to assign RAM property to a write_RAM interface """
         self._set_write_RAM(fsm, name, ram, port)
         fsm.goto_next()
 
-    def _set_write_RAM(self, fsm, name, ram, port=0):
+    def _set_write_RAM(self, fsm: FSM, name, ram, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1501,11 +1498,11 @@ class Stream(BaseStream):
         port = vtypes.to_int(port)
         self._setup_write_ram(ram, var, port, set_cond)
 
-    def set_read_modify_write_RAM(self, fsm, name, ram, read_ports=None, write_port=None):
+    def set_read_modify_write_RAM(self, fsm: FSM, name, ram, read_ports=None, write_port=None):
         self._set_read_modify_write_RAM(fsm, name, ram, read_ports, write_port)
         fsm.goto_next()
 
-    def _set_read_modify_write_RAM(self, fsm, name, ram, read_ports=None, write_port=None):
+    def _set_read_modify_write_RAM(self, fsm: FSM, name, ram, read_ports=None, write_port=None):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1540,12 +1537,12 @@ class Stream(BaseStream):
         write_name = write_ram
         self._set_write_RAM(fsm, write_name, ram, port=write_port)
 
-    def set_read_fifo(self, fsm, name, fifo):
+    def set_read_fifo(self, fsm: FSM, name, fifo):
         """ intrinsic method to assign FIFO property to a read_fifo interface """
         self._set_read_fifo(fsm, name, fifo)
         fsm.goto_next()
 
-    def _set_read_fifo(self, fsm, name, fifo):
+    def _set_read_fifo(self, fsm: FSM, name, fifo):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1569,12 +1566,12 @@ class Stream(BaseStream):
 
         self._setup_read_fifo(fifo, var, set_cond)
 
-    def set_write_fifo(self, fsm, name, fifo):
+    def set_write_fifo(self, fsm: FSM, name, fifo):
         """ intrinsic method to assign FIFO property to a write_fifo interface """
         self._set_write_fifo(fsm, name, fifo)
         fsm.goto_next()
 
-    def _set_write_fifo(self, fsm, name, fifo):
+    def _set_write_fifo(self, fsm: FSM, name, fifo):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1598,7 +1595,7 @@ class Stream(BaseStream):
 
         self._setup_write_fifo(fifo, var, set_cond)
 
-    def read_sink(self, fsm, name):
+    def read_sink(self, fsm: FSM, name):
         """ intrinsic method to read the last output of a sink stream """
 
         if not self.stream_synthesized:
@@ -1624,7 +1621,7 @@ class Stream(BaseStream):
 
         return var.sink_immediate
 
-    def run(self, fsm):
+    def run(self, fsm: FSM):
         cond = self._set_flag(fsm)
 
         self._run(cond)
@@ -1804,28 +1801,28 @@ class Stream(BaseStream):
 
         return 0
 
-    def join(self, fsm):
+    def join(self, fsm: FSM):
         fsm.If(vtypes.Not(self.busy)).goto_next()
         return 0
 
-    def done(self, fsm):
+    def done(self, fsm: FSM):
         return vtypes.Not(self.busy)
 
-    def source_join(self, fsm):
+    def source_join(self, fsm: FSM):
         fsm.If(vtypes.Not(self.source_busy)).goto_next()
         return 0
 
-    def source_done(self, fsm):
+    def source_done(self, fsm: FSM):
         return vtypes.Not(self.source_busy)
 
-    def sink_join(self, fsm):
+    def sink_join(self, fsm: FSM):
         fsm.If(vtypes.Not(self.sink_busy)).goto_next()
         return 0
 
-    def sink_done(self, fsm):
+    def sink_done(self, fsm: FSM):
         return vtypes.Not(self.sink_busy)
 
-    def source_join_and_run(self, fsm):
+    def source_join_and_run(self, fsm: FSM):
         cond = self._set_flag(fsm)
 
         self._run(cond)
@@ -1835,7 +1832,7 @@ class Stream(BaseStream):
 
         return 0
 
-    def enable_dump(self, fsm):
+    def enable_dump(self, fsm: FSM):
         if not self.dump:
             raise TypeError('dump mode is disabled.')
 
@@ -1846,7 +1843,7 @@ class Stream(BaseStream):
         fsm.goto_next()
         return self.dump_mask
 
-    def disable_dump(self, fsm):
+    def disable_dump(self, fsm: FSM):
         if not self.dump:
             raise TypeError('dump mode is disabled.')
 
@@ -3753,7 +3750,7 @@ class Stream(BaseStream):
         self.reduce_reset = self.source(reduce_reset_name,
                                         datawidth=1, signed=False, no_ctrl=True)
 
-    def _set_flag(self, fsm, prefix='_set_flag'):
+    def _set_flag(self, fsm: FSM, prefix='_set_flag'):
         flag = self.module.TmpWire(prefix=prefix)
         flag.assign(fsm.here)
         return flag

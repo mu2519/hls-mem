@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from veriloggen import *
 import veriloggen.thread as vthread
 import veriloggen.types.axi as axi
-from veriloggen.thread import inchworm
+from veriloggen.thread import inchworm2
 
 axi_datawidth = 32
 datawidth = 32
@@ -28,9 +28,9 @@ def mkLed():
     rst = m.Input('RST')
 
     addrwidth = 4
-    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth)
-    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth)
-    ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
+    ram_a = inchworm2.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth, mode='ro')
+    ram_b = inchworm2.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth, mode='ro')
+    ram_c = inchworm2.Inchworm(m, 'ram_c', clk, rst, datawidth, addrwidth, mode='wo')
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst, 32, length=8)
@@ -53,25 +53,29 @@ def mkLed():
 
         for i in range(matrix_size):
             ram_a.rebase()
-            inchworm.prefetch_dma_read(maxi, ram_a, a_addr, matrix_size, 8)
+            maxi.dma_read(ram_a, 0, a_addr, matrix_size, ram_method=ram_a.enqueue_for_dma)
 
             b_addr = b_offset
             for j in range(matrix_size):
                 ram_b.rebase()
-                inchworm.prefetch_dma_read(maxi, ram_b, b_addr, matrix_size, 8)
+                maxi.dma_read(ram_b, 0, b_addr, matrix_size, ram_method=ram_b.enqueue_for_dma)
 
                 sum = 0
                 for k in range(matrix_size):
                     x = ram_a.read(k)
                     y = ram_b.read(k)
-                    ram_a.dequeue(j == matrix_size - 1)
-                    ram_b.dequeue()
+                    if j == matrix_size - 1:
+                        ram_a.release()
+                    ram_b.release()
                     sum += x * y
+
                 ram_c.write(j, sum)
+                ram_c.release()
 
                 b_addr += matrix_size * (datawidth // 8)
 
-            maxi.dma_write(ram_c, 0, c_addr, matrix_size)
+            ram_c.rebase()
+            maxi.dma_write(ram_c, 0, c_addr, matrix_size, ram_method=ram_c.dequeue_for_dma)
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
 

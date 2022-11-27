@@ -1,10 +1,4 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
-import os
-import sys
 import math
-import copy
 import functools
 from collections import OrderedDict
 
@@ -58,7 +52,7 @@ class Stream(object):
         self.last_input = None
         self.last_output = None
 
-        self.module = opts['module'] if 'module' in opts else None
+        self.module: Module | None = opts['module'] if 'module' in opts else None
         self.clock = opts['clock'] if 'clock' in opts else None
         self.reset = opts['reset'] if 'reset' in opts else None
 

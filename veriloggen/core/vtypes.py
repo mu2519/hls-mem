@@ -2361,4 +2361,8 @@ class EmbeddedNumeric(EmbeddedCode, _Numeric):
 
 numerical_types = (_Numeric, int, bool, float, str)
 
+StrLike: TypeAlias = str | Str
+
+IntLike: TypeAlias = int | Int
+
 IntegralType: TypeAlias = _Numeric | int

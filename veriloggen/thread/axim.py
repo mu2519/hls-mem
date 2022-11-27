@@ -350,20 +350,20 @@ class AXIM(axi.AxiMaster, _MutexFunction):
                        local_stride, local_blocksize, port, ram_method)
 
     def dma_write(self, fsm: FSM, ram, local_addr, global_addr, local_size,
-                  local_stride=1, port=0):
+                  local_stride=1, port=0, ram_method=None):
 
         local_blocksize = 1
         self._dma_write(fsm, ram, local_addr, global_addr, local_size,
-                        local_stride, local_blocksize, port)
+                        local_stride, local_blocksize, port, ram_method)
 
         self.dma_wait_write(fsm)
 
     def dma_write_async(self, fsm: FSM, ram, local_addr, global_addr, local_size,
-                        local_stride=1, port=0):
+                        local_stride=1, port=0, ram_method=None):
 
         local_blocksize = 1
         self._dma_write(fsm, ram, local_addr, global_addr, local_size,
-                        local_stride, local_blocksize, port)
+                        local_stride, local_blocksize, port, ram_method)
 
     # DMA for each bank
     def dma_read_bank(self, fsm: FSM, ram, bank, local_bank_addr, global_addr, local_bank_size,
@@ -742,10 +742,7 @@ class AXIM(axi.AxiMaster, _MutexFunction):
             ram = to_multibank_ram(ram)
 
         if ram_method is None:
-            if isinstance(ram, (RAM, MultibankRAM)):
-                ram_method = getattr(ram, 'write_burst')
-            else:
-                ram_method = getattr(ram, 'fill_burst')
+            ram_method = getattr(ram, 'write_burst')
 
         ram_method_name = (ram_method.func.__name__
                            if isinstance(ram_method, functools.partial) else
@@ -1136,9 +1133,6 @@ class AXIM(axi.AxiMaster, _MutexFunction):
 
         if isinstance(ram, (tuple, list)):
             ram = to_multibank_ram(ram)
-
-        if not isinstance(ram, (RAM, MultibankRAM)):
-            raise TypeError('RAM object is required.')
 
         if ram_method is None:
             ram_method = getattr(ram, 'read_burst')
