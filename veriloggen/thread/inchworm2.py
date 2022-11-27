@@ -1,13 +1,13 @@
 from typing import Literal
 
-from veriloggen.core import module
-from veriloggen.core import vtypes
+from veriloggen.core import vtypes, module
 from veriloggen.seq.seq import Seq, make_condition
 from veriloggen.fsm.fsm import FSM, TmpFSM
 from .axim import AXIM
 from .ram import RAM
 
 
+# TODO: add forwarding logic to RAM
 class Inchworm:
     __intrinsics__ = ('dequeue', 'release', 'enqueue', 'read', 'write', 'rebase', 'dma_read', 'dma_write')
 
@@ -19,7 +19,7 @@ class Inchworm:
         rst: vtypes._Variable,
         datawidth: int,
         addrwidth: int,
-        mode: Literal['ro', 'wo', 'rw'] = 'rw'
+        mode: Literal['ro', 'wo', 'rw']
     ):
         if mode not in ['ro', 'wo', 'rw']:
             raise ValueError('Invalid operation mode')
@@ -69,8 +69,8 @@ class Inchworm:
             )
 
         # synchronization
-        self.inc_lim = m.Wire(name + '_inc_lim', 1, signed=False)
         self.set_lim = m.Wire(name + '_set_lim', 1, signed=False)
+        self.inc_lim = m.Wire(name + '_inc_lim', 1, signed=False)
         if mode == 'ro':
             self.seq.If(self.set_lim, self.inc_lim)(
                 self.limit(self.occupancy + 1)
@@ -118,7 +118,7 @@ class Inchworm:
             raise ValueError('Read-only mode does not support this operation')
 
         data, valid = self.ram.read_rtl(self.front, 1, fsm.here)
-        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='dequeue')
+        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='dequeue_data')
         fsm.If(valid)(
             data_reg(data)
         )
@@ -220,8 +220,8 @@ class Inchworm:
         if self.mode == 'wo':
             raise ValueError('Write-only mode does not support this operation')
 
-        fsm = TmpFSM(self.m, self.clk, self.rst, prefix='enqueue_for_dma')
-        length_reg = self.m.TmpReg(vtypes.get_width(length), prefix='length')
+        fsm = TmpFSM(self.m, self.clk, self.rst, prefix='enqueue_fsm')
+        length_reg = self.m.TmpReg(vtypes.get_width(length), prefix='enqueue_length')
 
         fsm(
             length_reg(length)
@@ -242,8 +242,8 @@ class Inchworm:
         fsm.If(wvalid, length_reg <= 1).goto_init()
 
     def read(self, fsm: FSM, index: vtypes.IntegralType) -> vtypes.Reg:
-        data, valid = self.ram.read_rtl(self.base + index, 0, (fsm.here, index < self.limit))
-        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='read')
+        data, valid = self.ram.read_rtl(self.base + index, 0, (fsm.here, self.limit > index))
+        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='read_data')
         fsm.If(valid)(
             data_reg(data)
         )
