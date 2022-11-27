@@ -284,8 +284,18 @@ class Inchworm:
         if not isinstance(axi, AXIM):
             raise TypeError
 
+        if not isinstance(self.datawidth, int):
+            raise TypeError
+
         block_size_in_words = block_size
-        block_size_in_bytes = block_size * (self.datawidth // 8)
+        word_size = self.datawidth // 8
+        # n & (n - 1) = 0 iff n = 2^k
+        # test if n is a power of two
+        if word_size & (word_size - 1) == 0:
+            # n.bit_length() - 1 gives k for n = 2^k
+            block_size_in_bytes = block_size << (word_size.bit_length() - 1)
+        else:
+            block_size_in_bytes = block_size * word_size
 
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_read_addr')  # address in bytes
         size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
@@ -321,8 +331,18 @@ class Inchworm:
         if not isinstance(axi, AXIM):
             raise TypeError
 
+        if not isinstance(self.datawidth, int):
+            raise TypeError
+
         block_size_in_words = block_size
-        block_size_in_bytes = block_size * (self.datawidth // 8)
+        word_size = self.datawidth // 8
+        # n & (n - 1) = 0 iff n = 2^k
+        # test if n is a power of two
+        if word_size & (word_size - 1) == 0:
+            # n.bit_length() - 1 gives k for n = 2^k
+            block_size_in_bytes = block_size << (word_size.bit_length() - 1)
+        else:
+            block_size_in_bytes = block_size * word_size
 
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_write_addr')  # address in bytes
         size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
