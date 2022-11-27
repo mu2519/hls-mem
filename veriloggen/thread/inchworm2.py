@@ -270,13 +270,6 @@ class Inchworm:
             )
         fsm.goto_next()
 
-    def _add_cond(self, tgt: vtypes._Variable, cond) -> None:
-        cond = make_condition(cond)
-        if tgt.assign_value is None:
-            tgt.assign(cond)
-        else:
-            tgt.assign_value.statement.right = vtypes.Lor(cond, tgt.assign_value.statement.right)
-
     def dma_read(self, fsm: FSM, axi: AXIM, global_addr, local_size, block_size) -> None:
         if self.mode == 'wo':
             raise ValueError('Write-only mode does not support this operation')
@@ -383,3 +376,10 @@ class Inchworm:
 
         fsm.goto_from(loop_body_end_count, loop_cond_check_count)
         fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)
+
+    def _add_cond(self, tgt: vtypes._Variable, cond) -> None:
+        cond = make_condition(cond)
+        if tgt.assign_value is None:
+            tgt.assign(cond)
+        else:
+            tgt.assign_value.statement.right = vtypes.Lor(cond, tgt.assign_value.statement.right)
