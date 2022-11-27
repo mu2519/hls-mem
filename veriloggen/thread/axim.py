@@ -1,6 +1,3 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
 import math
 import functools
 from collections import OrderedDict
@@ -13,7 +10,7 @@ from veriloggen.fsm.fsm import FSM
 from veriloggen.optimizer import try_optimize as optimize
 
 from .ttypes import _MutexFunction
-from .ram import RAM, MultibankRAM, to_multibank_ram
+from .ram import MultibankRAM, to_multibank_ram
 from .fifo import FIFO
 
 
