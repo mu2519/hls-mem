@@ -1,24 +1,15 @@
+from typing import Literal
+
 from veriloggen.core import vtypes, module
-from veriloggen.core.vtypes import Posedge, If, Land, Lor, Ulnot, Cond
+from veriloggen.seq.seq import Seq, make_condition
 from veriloggen.fsm.fsm import FSM, TmpFSM
-from .ram import RAM
 from .axim import AXIM
-
-
-"""
-Synchronization issues
-
-read <-> write: synchronized by caller
-enqueue, dequeue <-> read, write: no need to synchronize
-enqueue <-> dequeue: synchronized by callee
-rebase <-> read, write, dequeue: synchronized by caller
-rebase <-> enqueue: synchronized by callee
-"""
+from .ram import RAM
 
 
 # TODO: add forwarding logic to RAM
 class Inchworm:
-    __intrinsics__ = ('enqueue', 'dequeue', 'read', 'write', 'rebase')
+    __intrinsics__ = ('dequeue', 'release', 'enqueue', 'read', 'write', 'rebase', 'dma_read', 'dma_write')
 
     def __init__(
         self,
@@ -26,188 +17,369 @@ class Inchworm:
         name: str,
         clk: vtypes._Variable,
         rst: vtypes._Variable,
-        datawidth: int = 32,
-        addrwidth: int = 10
+        datawidth: int,
+        addrwidth: int,
+        mode: Literal['ro', 'wo', 'rw']
     ):
+        if mode not in ['ro', 'wo', 'rw']:
+            raise ValueError('Invalid operation mode')
+
         self.m = m
         self.name = name
         self.clk = clk
         self.rst = rst
         self.datawidth = datawidth
         self.addrwidth = addrwidth
+        self.mode = mode
 
-        self.ram = RAM(m, name, clk, rst, datawidth, addrwidth, numports=2)
+        self.size = 1 << addrwidth
 
-        self.base = m.Reg(name + '_base', addrwidth, signed=False, initval=0)  # base of index
-        self.limit = m.Reg(name + '_limit', addrwidth + 1, signed=False, initval=0)  # limit of index
-        self.head = m.Reg(name + '_head', addrwidth, signed=False, initval=0)  # head of queue
-        self.occupancy = m.Reg(name + '_occupancy', addrwidth + 1, signed=False, initval=0)  # occupancy of queue
-        self.size = 1 << addrwidth  # physical size of RAM
+        self.ram = RAM(m, name + '_ram', clk, rst, datawidth, addrwidth, numports=2)
 
-        self.inc_occ = m.Wire(name + '_inc_occ', 1, signed=False)
-        self.dec_occ = m.Wire(name + '_dec_occ', 1, signed=False)
-        m.Always(Posedge(clk))(
-            If(rst)(
-                self.occupancy(0)
-            ).Else(
-                If(Land(self.inc_occ, Ulnot(self.dec_occ)))(
-                    self.occupancy.inc()
-                ).Elif(Land(Ulnot(self.inc_occ), self.dec_occ))(
-                    self.occupancy.dec()
+        self.front = m.Reg(name + '_front', addrwidth, signed=False, initval=0)
+        if mode == 'rw':
+            self.occupancy = tuple(m.Reg(name + '_occupancy_' + str(i), addrwidth + 1, signed=False, initval=0) for i in range(2))
+        else:
+            self.occupancy = m.Reg(name + '_occupancy', addrwidth + 1, signed=False, initval=0)
+        self.base = m.Reg(name + '_base', addrwidth, signed=False, initval=0)
+        if mode == 'wo':
+            self.limit = m.Reg(name + '_limit', addrwidth + 2, signed=False, initval=self.size)
+        else:
+            self.limit = m.Reg(name + '_limit', addrwidth + 2, signed=False, initval=0)
+
+        self.seq = Seq(m, name + '_seq', clk, rst)
+
+        # synchronization
+        if mode == 'rw':
+            self.inc_occ = tuple(m.Wire(name + '_inc_occ_' + str(i), 1, signed=False) for i in range(2))
+            self.dec_occ = tuple(m.Wire(name + '_dec_occ_' + str(i), 1, signed=False) for i in range(2))
+            for i in range(2):
+                self.seq.If(self.inc_occ[i], vtypes.Not(self.dec_occ[i]))(
+                    self.occupancy[i].inc()
+                ).Elif(vtypes.Not(self.inc_occ[i]), self.dec_occ[i])(
+                    self.occupancy[i].dec()
                 )
+        else:
+            self.inc_occ = m.Wire(name + '_inc_occ', 1, signed=False)
+            self.dec_occ = m.Wire(name + '_dec_occ', 1, signed=False)
+            self.seq.If(self.inc_occ, vtypes.Not(self.dec_occ))(
+                self.occupancy.inc()
+            ).Elif(vtypes.Not(self.inc_occ), self.dec_occ)(
+                self.occupancy.dec()
             )
-        )
 
+        # synchronization
         self.set_lim = m.Wire(name + '_set_lim', 1, signed=False)
         self.inc_lim = m.Wire(name + '_inc_lim', 1, signed=False)
-        m.Always(Posedge(clk))(
-            If(rst)(
-                self.limit(0)
-            ).Else(
-                If(Land(self.set_lim, self.inc_lim))(
-                    self.limit(self.occupancy + 1)
-                ).Elif(self.set_lim)(
-                    self.limit(self.occupancy)
-                ).Elif(self.inc_lim)(
-                    self.limit.inc()
-                )
+        if mode == 'ro':
+            self.seq.If(self.set_lim, self.inc_lim)(
+                self.limit(self.occupancy + 1)
+            ).Elif(self.set_lim)(
+                self.limit(self.occupancy)
+            ).Elif(self.inc_lim)(
+                self.limit.inc()
             )
-        )
+        elif mode == 'wo':
+            self.seq.If(self.set_lim, self.inc_lim)(
+                self.limit((self.size + 1) - self.occupancy)
+            ).Elif(self.set_lim)(
+                self.limit(self.size - self.occupancy)
+            ).Elif(self.inc_lim)(
+                self.limit.inc()
+            )
+        else:
+            self.seq.If(self.set_lim, self.inc_lim)(
+                # ternary addition possibly results in critical path
+                self.limit(self.occupancy[1] - self.occupancy[0] + 1)
+            ).Elif(self.set_lim)(
+                self.limit(self.occupancy[1] - self.occupancy[0])
+            ).Elif(self.inc_lim)(
+                self.limit.inc()
+            )
 
     @property
-    def empty(self):
-        return self.occupancy == 0
-
-    @property
-    def full(self):
-        return self.occupancy == self.size
+    def back(self):
+        if self.mode == 'rw':
+            return self.front + self.occupancy[1]
+        else:
+            return self.front + self.occupancy
 
     @property
     def vacancy(self):
-        return self.size - self.occupancy
+        if self.mode == 'ro':
+            return self.size - self.occupancy
+        elif self.mode == 'wo':
+            raise ValueError('Write-only mode does not have this property')
+        else:
+            return self.size - self.occupancy[1]
 
-    @property
-    def tail(self):
-        return self.head + self.occupancy
+    def dequeue(self, fsm: FSM) -> vtypes.Reg:
+        if self.mode == 'ro':
+            raise ValueError('Read-only mode does not support this operation')
 
-    def enqueue(self, fsm: FSM, data: vtypes.IntegralType) -> None:
-        """ this method does not check if queue is full """
-        self.ram.write_rtl(self.tail, data, port=1, cond=fsm.here)
-        self._add_assign(self.inc_occ, fsm.here)
-        self._add_assign(self.inc_lim, fsm.here)
+        data, valid = self.ram.read_rtl(self.front, 1, fsm.here)
+        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='dequeue_data')
+        fsm.If(valid)(
+            data_reg(data)
+        )
+
+        self.seq.If(fsm.here, valid)(
+            self.front.inc()
+        )
+
+        if self.mode == 'wo':
+            self._add_cond(self.inc_lim, (fsm.here, valid))
+            self._add_cond(self.dec_occ, (fsm.here, valid))
+        else:
+            for i in range(2):
+                self._add_cond(self.dec_occ[i], (fsm.here, valid))
+        fsm.If(valid).goto_next()
+
+        return data_reg
+
+    # used for DMA write and called by AXIM._synthesize_write_data_fsm_*
+    # created based on RAM.read_burst
+    # unused parameters: addr, stride, blocksize, rquit, port
+    def dequeue_for_dma(self, addr, stride, length, blocksize, rready, rquit=False, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Reg, vtypes.Reg]:
+        if self.mode == 'ro':
+            raise ValueError('Read-only mode does not support this operation')
+
+        fsm = TmpFSM(self.m, self.clk, self.rst, prefix='dequeue_fsm')
+        length_reg = self.m.TmpReg(vtypes.get_width(length), prefix='dequeue_length')
+
+        rvalid = self.m.TmpReg(1, signed=False, prefix='dequeue_rvalid')
+        rlast = self.m.TmpReg(1, signed=False, prefix='dequeue_rlast')
+
+        fsm(
+            length_reg(length),
+            rvalid(0),
+            rlast(0)
+        )
+        fsm.If(cond, length > 0).goto_next()
+
+        renable = vtypes.Ands(fsm.here, vtypes.Ors(vtypes.Not(rvalid), rready))
+        rdata, _ = self.ram.read_rtl(self.front, 1, renable)
+        rdata_wire = self.m.TmpWireLike(rdata, prefix='dequeue_rdata')
+        rdata_wire.assign(rdata)
+
+        self.seq.If(fsm.here, rready, length_reg > 0)(
+            self.front.inc()
+        )
+
+        if self.mode == 'wo':
+            self._add_cond(self.inc_lim, (fsm.here, rready, length_reg > 0))
+            self._add_cond(self.dec_occ, (fsm.here, rready, length_reg > 0))
+        else:
+            for i in range(2):
+                self._add_cond(self.dec_occ[i], (fsm.here, rready, length_reg > 0))
+
+        fsm.If(rready, length_reg > 0)(
+            length_reg.dec(),
+            rvalid(1)
+        )
+        fsm.If(rready, length_reg <= 1)(
+            rlast(1)
+        )
+        fsm.If(rlast, rvalid, rready)(
+            rvalid(0),
+            rlast(0)
+        )
+        fsm.If(rlast, rvalid, rready).goto_init()
+
+        return rdata_wire, rvalid, rlast
+
+    def release(self, fsm: FSM) -> None:
+        if self.mode == 'ro':
+            self.seq.If(fsm.here)(
+                self.front.inc()
+            )
+            self._add_cond(self.dec_occ, fsm.here)
+        elif self.mode == 'wo':
+            self._add_cond(self.inc_occ, fsm.here)
+        else:
+            self._add_cond(self.inc_occ[0], fsm.here)
         fsm.goto_next()
 
-    # used for DMA and called by AXIM._synthesize_read_data_fsm_*
+    def enqueue(self, fsm: FSM, data: vtypes.IntegralType) -> None:
+        if self.mode == 'wo':
+            raise ValueError('Write-only mode does not support this operation')
+
+        self.ram.write_rtl(self.back, data, 1, fsm.here)
+
+        self._add_cond(self.inc_lim, fsm.here)
+        if self.mode == 'ro':
+            self._add_cond(self.inc_occ, fsm.here)
+        else:
+            self._add_cond(self.inc_occ[1], fsm.here)
+        fsm.goto_next()
+
+    # used for DMA read and called by AXIM._synthesize_read_data_fsm_*
     # created based on RAM.write_burst
     # unused parameters: addr, stride, blocksize, wlast, wquit, port
     def enqueue_for_dma(self, addr, stride, length, blocksize, wdata, wvalid, wlast=False, wquit=False, port=0, cond=None) -> None:
-        fsm = TmpFSM(self.m, self.clk, self.rst, prefix='enqueue_for_dma_fsm')
-        length_reg = self.m.TmpReg(vtypes.get_width(length), initval=0, prefix='enqueue_for_dma_length')
+        if self.mode == 'wo':
+            raise ValueError('Write-only mode does not support this operation')
+
+        fsm = TmpFSM(self.m, self.clk, self.rst, prefix='enqueue_fsm')
+        length_reg = self.m.TmpReg(vtypes.get_width(length), prefix='enqueue_length')
 
         fsm(
             length_reg(length)
         )
         fsm.If(cond, length > 0).goto_next()
 
-        self.ram.write_rtl(self.tail, wdata, port=1, cond=Land(fsm.here, wvalid))
-        self._add_assign(self.inc_occ, Land(fsm.here, wvalid))
-        self._add_assign(self.inc_lim, Land(fsm.here, wvalid))
+        self.ram.write_rtl(self.back, wdata, 1, (fsm.here, wvalid))
+
+        self._add_cond(self.inc_lim, (fsm.here, wvalid))
+        if self.mode == 'ro':
+            self._add_cond(self.inc_occ, (fsm.here, wvalid))
+        else:
+            self._add_cond(self.inc_occ[1], (fsm.here, wvalid))
+
         fsm.If(wvalid)(
             length_reg.dec()
         )
         fsm.If(wvalid, length_reg <= 1).goto_init()
 
-    def dequeue(self, fsm: FSM, cond: vtypes.IntegralType | None = None) -> None:
-        """ this method does not check if queue is empty """
-        if cond is None:
-            self._add_assign(self.dec_occ, fsm.here)
-            fsm(
-                self.head.inc()
-            )
-        else:
-            self._add_assign(self.dec_occ, Land(fsm.here, cond))
-            fsm.If(cond)(
-                self.head.inc()
-            )
-        fsm.goto_next()
-
     def read(self, fsm: FSM, index: vtypes.IntegralType) -> vtypes.Reg:
-        addr = self.base + index
-        cond = Land(fsm.here, self.limit > index)
-        data, valid = self.ram.read_rtl(addr, port=0, cond=cond)
-        data_reg = self.m.TmpReg(self.datawidth, signed=False, initval=0, prefix='read_data')
+        data, valid = self.ram.read_rtl(self.base + index, 0, (fsm.here, self.limit > index))
+        data_reg = self.m.TmpReg(self.datawidth, signed=False, prefix='read_data')
         fsm.If(valid)(
             data_reg(data)
         )
         fsm.If(valid).goto_next()
         return data_reg
 
-    def write(self, fsm: FSM) -> None:
-        pass
+    def write(self, fsm: FSM, index: vtypes.IntegralType, data: vtypes.IntegralType) -> None:
+        self.ram.write_rtl(self.base + index, data, 0, (fsm.here, index < self.limit))
+        fsm.If(index < self.limit).goto_next()
 
     def rebase(self, fsm: FSM) -> None:
-        self._add_assign(self.set_lim, fsm.here)
+        self._add_cond(self.set_lim, fsm.here)
+        if self.mode == 'ro':
+            self.seq.If(fsm.here)(
+                self.base(self.front)
+            )
+        elif self.mode == 'wo':
+            self.seq.If(fsm.here)(
+                self.base(self.front + self.occupancy)
+            )
+        else:
+            self.seq.If(fsm.here)(
+                self.base(self.front + self.occupancy[0])
+            )
+        fsm.goto_next()
+
+    def dma_read(self, fsm: FSM, axi: AXIM, global_addr, local_size, block_size) -> None:
+        if self.mode == 'wo':
+            raise ValueError('Write-only mode does not support this operation')
+
+        if not isinstance(axi, AXIM):
+            raise TypeError
+
+        if not isinstance(self.datawidth, int):
+            raise TypeError
+
+        block_size_in_words = block_size
+        word_size = self.datawidth // 8
+        # n & (n - 1) = 0 iff n = 2^k
+        # test if n is a power of two
+        if word_size & (word_size - 1) == 0:
+            # n.bit_length() - 1 gives k for n = 2^k
+            block_size_in_bytes = block_size << (word_size.bit_length() - 1)
+        else:
+            block_size_in_bytes = block_size * word_size
+
+        addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_read_addr')  # address in bytes
+        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
+
+        # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
+        # otherwise, transfer the data whose size is equal to the block size
+        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_read_next_transfer_size')
+        next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
+
         fsm(
-            self.base(self.head)
+            addr(global_addr),
+            size(local_size)
         )
         fsm.goto_next()
 
-    def _add_assign(self, var: vtypes.Wire, val: vtypes.IntegralType) -> None:
-        if var.assign_value is None:
-            var.assign(val)
+        loop_cond_check_count = fsm.current
+        fsm.inc()
+        loop_body_begin_count = fsm.current
+        fsm.If(self.vacancy >= next_transfer_size).goto_next()
+        axi.lock(fsm)
+        axi.dma_read(fsm, self, 0, addr, next_transfer_size, ram_method=self.enqueue_for_dma)
+        axi.unlock(fsm)
+        loop_body_end_count = fsm.current
+        fsm(
+            addr.add(block_size_in_bytes),
+            size.sub(next_transfer_size)
+        )
+        fsm.inc()
+        loop_exit_count = fsm.current
+
+        fsm.goto_from(loop_body_end_count, loop_cond_check_count)
+        fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)
+
+    def dma_write(self, fsm: FSM, axi: AXIM, global_addr, local_size, block_size):
+        if self.mode == 'ro':
+            raise ValueError('Read-only mode does not support this operation')
+
+        if not isinstance(axi, AXIM):
+            raise TypeError
+
+        if not isinstance(self.datawidth, int):
+            raise TypeError
+
+        block_size_in_words = block_size
+        word_size = self.datawidth // 8
+        # n & (n - 1) = 0 iff n = 2^k
+        # test if n is a power of two
+        if word_size & (word_size - 1) == 0:
+            # n.bit_length() - 1 gives k for n = 2^k
+            block_size_in_bytes = block_size << (word_size.bit_length() - 1)
         else:
-            var.assign_value.statement.right = Lor(val, var.assign_value.statement.right)
+            block_size_in_bytes = block_size * word_size
 
+        addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_write_addr')  # address in bytes
+        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
 
-__intrinsics__ = ('prefetch_dma_read',)
+        # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
+        # otherwise, transfer the data whose size is equal to the block size
+        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_write_next_transfer_size')
+        next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
 
+        fsm(
+            addr(global_addr),
+            size(local_size)
+        )
+        fsm.goto_next()
 
-def prefetch_dma_read(fsm: FSM, axi: AXIM, ram: Inchworm, global_addr, region_size, block_size):
-    if not isinstance(axi, AXIM):
-        raise TypeError('AXIM object is required for AXI module')
-    if not isinstance(ram, Inchworm):
-        raise TypeError('Inchworm object is required for RAM module')
+        loop_cond_check_count = fsm.current
+        fsm.inc()
+        loop_body_begin_count = fsm.current
+        if self.mode == 'wo':
+            fsm.If(self.occupancy >= next_transfer_size).goto_next()
+        else:
+            fsm.If(self.occupancy[0] >= next_transfer_size).goto_next()
+        axi.lock(fsm)
+        axi.dma_write(fsm, self, 0, addr, next_transfer_size, ram_method=self.dequeue_for_dma)
+        axi.unlock(fsm)
+        loop_body_end_count = fsm.current
+        fsm(
+            addr.add(block_size_in_bytes),
+            size.sub(next_transfer_size)
+        )
+        fsm.inc()
+        loop_exit_count = fsm.current
 
-    if fsm.m is not axi.m:
-        raise ValueError('different modules are not allowed')
-    m = fsm.m
+        fsm.goto_from(loop_body_end_count, loop_cond_check_count)
+        fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)
 
-    block_size_in_words = block_size
-    word_size = ram.datawidth // 8
-    # n & (n - 1) = 0 iff n = 2^k
-    # test if n is a power of two
-    if word_size & (word_size - 1) == 0:
-        # n.bit_length() - 1 gives k for n = 2^k
-        block_size_in_bytes = block_size_in_words << (word_size.bit_length() - 1)
-    else:
-        block_size_in_bytes = block_size_in_words * word_size
-
-    addr = m.TmpReg(axi.addrwidth, signed=False, initval=0, prefix='prefetch_dma_addr')  # address in bytes
-    size = m.TmpReg(axi.addrwidth + 1, signed=False, initval=0, prefix='prefetch_dma_size')  # size in words
-
-    next_transfer_size = m.TmpWire(axi.addrwidth + 1, signed=False, prefix='prefetch_dma_read_next_transfer_size')
-    next_transfer_size.assign(Cond(size <= block_size_in_words, size, block_size_in_words))
-
-    fsm(
-        addr(global_addr),
-        size(region_size)
-    )
-    fsm.goto_next()
-
-    loop_cond_check_count = fsm.current
-    fsm.inc()
-    loop_body_begin_count = fsm.current
-    fsm.If(ram.vacancy >= next_transfer_size).goto_next()
-    axi.lock(fsm)
-    axi.dma_read(fsm, ram, 0, addr, next_transfer_size, ram_method=ram.enqueue_for_dma)
-    axi.unlock(fsm)
-    loop_body_end_count = fsm.current
-    fsm(
-        addr.add(block_size_in_bytes),
-        size.sub(next_transfer_size)
-    )
-    fsm.inc()
-    loop_exit_count = fsm.current
-
-    fsm.goto_from(loop_body_end_count, loop_cond_check_count)
-    fsm.goto_from(loop_cond_check_count, loop_body_begin_count, size > 0, loop_exit_count)
+    def _add_cond(self, tgt: vtypes._Variable, cond) -> None:
+        cond = make_condition(cond)
+        if tgt.assign_value is None:
+            tgt.assign(cond)
+        else:
+            tgt.assign_value.statement.right = vtypes.Lor(cond, tgt.assign_value.statement.right)

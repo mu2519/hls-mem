@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from veriloggen import *
 import veriloggen.thread as vthread
 import veriloggen.types.axi as axi
-from veriloggen.thread import inchworm2
 
 axi_datawidth = 32
 datawidth = 32
@@ -28,9 +27,9 @@ def mkLed():
     rst = m.Input('RST')
 
     addrwidth = 4
-    ram_a = inchworm2.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth, mode='ro')
-    ram_b = inchworm2.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth, mode='ro')
-    ram_c = inchworm2.Inchworm(m, 'ram_c', clk, rst, datawidth, addrwidth, mode='wo')
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth, mode='ro')
+    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth, mode='ro')
+    ram_c = vthread.Inchworm(m, 'ram_c', clk, rst, datawidth, addrwidth, mode='wo')
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst, 32, length=8)
