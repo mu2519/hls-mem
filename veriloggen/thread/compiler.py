@@ -225,7 +225,7 @@ class FunctionVisitor(ast.NodeVisitor):
 
 class CompileVisitor(ast.NodeVisitor):
 
-    def __init__(self, m, name: str, clk, rst, fsm,
+    def __init__(self, m, name: str, clk, rst, fsm: FSM,
                  functions: dict[str, ast.FunctionDef],
                  intrinsic_functions: dict[str, FunctionType],
                  intrinsic_methods: dict[str, MethodType],
@@ -507,10 +507,6 @@ class CompileVisitor(ast.NodeVisitor):
     def _for_range_fsm(self, begin_node, end_node, step_node,
                        iter_node, cond_node, update_node, body: list[ast.stmt],
                        target_update: tuple[Any, Any] | None = None):
-
-        # this variable enables communication between main FSM and prefetch FSM
-        flag = self.getTmpVariable()
-
         filtered_body = filter_loop(body)
 
         for ram in self.rams:
@@ -577,7 +573,7 @@ class CompileVisitor(ast.NodeVisitor):
                 self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
 
                 self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
-                self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+                self.setFsm(prefetch_idle_count, prefetch_active_count, self.main_fsm.here)
 
                 # change from prefetch FSM to main FSM
                 self.fsm = self.main_fsm
@@ -585,13 +581,6 @@ class CompileVisitor(ast.NodeVisitor):
         body = temporary(body, self.rams)
 
         self.pushScope()
-
-        self.setBind(flag, vtypes.Int(1))
-        self.setFsm()
-        self.incFsmCount()
-        self.setBind(flag, vtypes.Int(0))
-        self.setFsm()
-        self.incFsmCount()
 
         # initialize
         self.setBind(iter_node, begin_node)
