@@ -8,7 +8,7 @@ import textwrap
 from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Literal, Any
-from types import FunctionType, MethodType
+from types import FunctionType, MethodType, FrameType
 
 from veriloggen.fsm.fsm import FSM
 import veriloggen.core.vtypes as vtypes
@@ -17,6 +17,7 @@ from veriloggen.optimizer import try_optimize as optimize
 from .scope import ScopeFrameList
 from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
+from .inchworm import Inchworm
 
 numerical_types = vtypes.numerical_types
 
@@ -28,6 +29,72 @@ _tmp_count = 0
 
 memory_access_func: list[str] = []
 memory_access_method: list[str] = ['dma_read', 'dma_write']
+
+
+def find_dma(code: ast.AST | Sequence[ast.AST], ram_name: str) -> bool:
+    """
+    judge whether DMA accesses tied to the specified RAM object exist
+    `ram_name`: the identifier of the RAM object
+    """
+    if isinstance(code, ast.AST):
+        node = code
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            value = node.func.value
+            attr = node.func.attr
+            if isinstance(value, ast.Name) and value.id == ram_name:
+                if attr in ['dma_read', 'dma_write']:
+                    return True
+        for n in ast.iter_child_nodes(node):
+            if find_dma(n, ram_name):
+                return True
+    else:
+        nodes = code
+        for n in nodes:
+            if find_dma(n, ram_name):
+                return True
+    return False
+
+
+def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
+    """
+    extract variables which occur in the arguments of function calls
+    for DMA accesses tied to the specified RAM object
+    `ram_name`: the identifier of the RAM object
+    """
+    if isinstance(code, ast.AST):
+        node = code
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == ram_name:
+                if node.func.attr in ['dma_read', 'dma_write']:
+                    return get_vars(node, 'both')
+        return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), ast.iter_child_nodes(node)), set())
+    else:
+        nodes = code
+        return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), nodes), set())
+
+
+def filter_dma_related_stmts(stmts: list[ast.stmt], ram_name: str):
+    """
+    extract statements related to DMA accesses tied to the specified RAM object
+    `ram_name`: the identifier of the RAM object
+    """
+    # extract variables related to memory accesses and variables necessary to calculate them (recursively)
+    needed_vars = get_dma_vars(stmts, ram_name)
+    while True:
+        ischanged = False
+        for s in reversed(stmts):
+            if get_vars(s, "store") & needed_vars:
+                if not get_vars(s, "load") <= needed_vars:
+                    ischanged = True
+                    needed_vars |= get_vars(s, "load")
+        if not ischanged:
+            break
+    # extract statements related to memory accesses and statements to calculate data necessary for memory accesses
+    filtered_stmts: list[ast.stmt] = []
+    for s in stmts:
+        if find_dma(s, ram_name) or (get_vars(s, "store") & needed_vars):
+            filtered_stmts.append(s)
+    return filtered_stmts
 
 
 def find_memory_access_sub(node: ast.AST) -> bool:
@@ -231,7 +298,7 @@ class CompileVisitor(ast.NodeVisitor):
                  functions: dict[str, ast.FunctionDef],
                  intrinsic_functions: dict[str, FunctionType],
                  intrinsic_methods: dict[str, MethodType],
-                 start_frame,
+                 start_frame: FrameType,
                  datawidth=32, point=16):
 
         self.m = m
@@ -507,73 +574,78 @@ class CompileVisitor(ast.NodeVisitor):
         flag = self.getTmpVariable()
 
         filtered_body = filter_loop(body)
-        if find_memory_access(filtered_body):
-            def isbound(var: str) -> bool:
-                try:
-                    self.getVariable(var)
-                except NameError:
-                    return False
-                return True
 
-            prefetch_suffix = ['prefetch', str(self.prefetch_count)]
-            prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
-            self.prefetch_count += 1
+        scope: dict[str, Any] = dict()
+        scope.update(self.start_frame.f_locals)
+        scope.update(self.start_frame.f_globals)
+        for name, value in scope.items():
+            if isinstance(value, Inchworm) and find_dma(filtered_body, name):
+                def isbound(var: str) -> bool:
+                    try:
+                        self.getVariable(var)
+                    except NameError:
+                        return False
+                    return True
 
-            modified_vars = get_vars(body, "store")
-            prefetch_body = filter_mem_rel_stmts(filtered_body)
-            renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
-            print(ast.unparse(filtered_body))
-            print()
-            print(ast.unparse(prefetch_body))
-            print()
-            print(ast.unparse(renamed_body))
-            print()
+                prefetch_suffix = ['prefetch', str(self.prefetch_count)]
+                prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
+                self.prefetch_count += 1
 
-            prefetch_iter_node = self.getTmpVariable()
+                modified_vars = get_vars(body, "store")
+                prefetch_body = filter_dma_related_stmts(filtered_body, name)
+                renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
+                print(ast.unparse(filtered_body))
+                print()
+                print(ast.unparse(prefetch_body))
+                print()
+                print(ast.unparse(renamed_body))
+                print()
 
-            # change from main FSM to prefetch FSM
-            self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
-            self.fsm = self.prefetch_fsm
+                prefetch_iter_node = self.getTmpVariable()
 
-            self.pushScope()
+                # change from main FSM to prefetch FSM
+                self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
+                self.fsm = self.prefetch_fsm
 
-            # initialize
-            prefetch_idle_count = self.getFsmCount()
-            self.incFsmCount()
-            prefetch_active_count = self.getFsmCount()
-            copied_vars = list(filter(isbound, modified_vars))
-            if copied_vars:
-                self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
-            self.setBind(prefetch_iter_node, begin_node)
-            self.setFsm()
-            self.incFsmCount()
+                self.pushScope()
 
-            # condition check
-            prefetch_check_count = self.getFsmCount()
-            self.incFsmCount()
-            prefetch_body_begin_count = self.getFsmCount()
+                # initialize
+                prefetch_idle_count = self.getFsmCount()
+                self.incFsmCount()
+                prefetch_active_count = self.getFsmCount()
+                copied_vars = list(filter(isbound, modified_vars))
+                if copied_vars:
+                    self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
+                self.setBind(prefetch_iter_node, begin_node)
+                self.setFsm()
+                self.incFsmCount()
 
-            # body
-            for b in renamed_body:
-                self.visit(b)
+                # condition check
+                prefetch_check_count = self.getFsmCount()
+                self.incFsmCount()
+                prefetch_body_begin_count = self.getFsmCount()
 
-            self.popScope()
+                # body
+                for b in renamed_body:
+                    self.visit(b)
 
-            prefetch_body_end_count = self.getFsmCount()
+                self.popScope()
 
-            # update
-            self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
-            self.incFsmCount()
-            prefetch_loop_exit_count = self.getFsmCount()
+                prefetch_body_end_count = self.getFsmCount()
 
-            self.setFsm(prefetch_body_end_count, prefetch_check_count)
-            self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
+                # update
+                self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
+                self.incFsmCount()
+                prefetch_loop_exit_count = self.getFsmCount()
 
-            self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
-            self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+                self.setFsm(prefetch_body_end_count, prefetch_check_count)
+                self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
 
-            # change from prefetch FSM to main FSM
-            self.fsm = self.main_fsm
+                self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
+                self.setFsm(prefetch_idle_count, prefetch_active_count, flag)
+
+                # change from prefetch FSM to main FSM
+                self.fsm = self.main_fsm
 
         body = temporary(body)
 
