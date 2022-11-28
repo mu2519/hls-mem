@@ -27,8 +27,72 @@ _tmp_count = 0
 # compiler.py: Python AST -> FSM
 
 
-memory_access_func: list[str] = []
-memory_access_method: list[str] = ['dma_read', 'dma_write']
+def union(x: set, y: set) -> set:
+    return x | y
+
+
+def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'both']) -> set[str]:
+    """
+    extract variables which have the specified context
+    `ctx`: the context of variables
+    """
+    match code:
+        case [*_] as nodes:
+            return reduce(union, map(partial(get_vars, ctx=ctx), nodes), set())
+        case ast.AST() as node:
+            match ctx:
+                case 'load':
+                    if isinstance(node, ast.AugAssign):
+                        return get_vars(node.target, 'store') | get_vars(node.value, 'load')
+                    if isinstance(node, ast.Name):
+                        return {node.id} if isinstance(node.ctx, ast.Load) else set()
+                case 'store':
+                    if isinstance(node, ast.Name):
+                        return {node.id} if isinstance(node.ctx, ast.Store) else set()
+                case 'both':
+                    if isinstance(node, ast.Name):
+                        return {node.id}
+                case _:
+                    raise ValueError
+            return reduce(union, map(partial(get_vars, ctx=ctx), ast.iter_child_nodes(node)), set())
+        case _:
+            raise TypeError
+
+
+def rename_vars_sub(node: ast.AST, vars: set[str], suffix: list[str]) -> None:
+    if isinstance(node, ast.Name):
+        if node.id in vars:
+            node.id = '_'.join([node.id] + suffix)
+    for n in ast.iter_child_nodes(node):
+        rename_vars_sub(n, vars, suffix)
+
+
+# rename the specified variables (`vars`) in the given statements (`stmts`) by adding the given suffix (`suffix`)
+# example: foo -> foo_bar_2 if suffix = ['bar', '2']
+def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: list[str]) -> list[ast.stmt]:
+    ret = []
+    for stmt in stmts:
+        copied_stmt = copy.deepcopy(stmt)
+        rename_vars_sub(copied_stmt, vars, suffix)
+        ret.append(copied_stmt)
+    return ret
+
+
+def filter_loop_sub(stmt: ast.stmt) -> ast.stmt | None:
+    if isinstance(stmt, ast.If):
+        if filter_loop(stmt.body) or filter_loop(stmt.orelse):
+            return ast.If(test=stmt.test, body=filter_loop(stmt.body), orelse=filter_loop(stmt.orelse))
+        else:
+            return ast.Expr(stmt.test)
+    elif isinstance(stmt, (ast.For, ast.While)):
+        return None
+    else:
+        return stmt
+
+
+# remove loops: ast.For, ast.While
+def filter_loop(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    return list(filter(lambda x: x is not None, map(filter_loop_sub, stmts)))
 
 
 def find_dma(code: ast.AST | Sequence[ast.AST], ram_name: str) -> bool:
@@ -66,7 +130,7 @@ def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name) and node.func.value.id == ram_name:
                 if node.func.attr in ['dma_read', 'dma_write']:
-                    return get_vars(node, 'both')
+                    return get_vars(node.args, 'both') | get_vars([kw.value for kw in node.keywords], 'both')
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), ast.iter_child_nodes(node)), set())
     else:
         nodes = code
@@ -78,164 +142,31 @@ def filter_dma_related_stmts(stmts: list[ast.stmt], ram_name: str):
     extract statements related to DMA accesses tied to the specified RAM object
     `ram_name`: the identifier of the RAM object
     """
-    # extract variables related to memory accesses and variables necessary to calculate them (recursively)
+    # extract variables related to DMA accesses tied to the specified RAM object
+    # and variables necessary to calculate them (recursively)
     needed_vars = get_dma_vars(stmts, ram_name)
     while True:
         ischanged = False
         for s in reversed(stmts):
-            if get_vars(s, "store") & needed_vars:
-                if not get_vars(s, "load") <= needed_vars:
+            if get_vars(s, 'store') & needed_vars:
+                if not get_vars(s, 'load') <= needed_vars:
                     ischanged = True
-                    needed_vars |= get_vars(s, "load")
+                    needed_vars |= get_vars(s, 'load')
         if not ischanged:
             break
-    # extract statements related to memory accesses and statements to calculate data necessary for memory accesses
+    # extract statements related to DMA accesses tied to the specified RAM object
+    # and statements to calculate data necessary for those DMA accesses
     filtered_stmts: list[ast.stmt] = []
     for s in stmts:
-        if find_dma(s, ram_name) or (get_vars(s, "store") & needed_vars):
+        if find_dma(s, ram_name) or get_vars(s, 'store') & needed_vars:
             filtered_stmts.append(s)
     return filtered_stmts
 
 
-def find_memory_access_sub(node: ast.AST) -> bool:
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name):
-            if node.func.id in memory_access_func:
-                return True
-        elif isinstance(node.func, ast.Attribute):
-            if node.func.attr in memory_access_method:
-                return True
-        else:
-            raise NotImplementedError(f'unsupported callable type {type(node.func)}')
-    for n in ast.iter_child_nodes(node):
-        if find_memory_access_sub(n):
-            return True
-    return False
-
-
-# judge whether memory accesses are performed i.e. memory access functions are called
-def find_memory_access(stmts: list[ast.stmt]) -> bool:
-    for s in stmts:
-        if find_memory_access_sub(s):
-            return True
-    return False
-
-
-def filter_loop_sub(stmt: ast.stmt) -> ast.stmt | None:
-    if isinstance(stmt, ast.If):
-        if filter_loop(stmt.body) or filter_loop(stmt.orelse):
-            return ast.If(test=stmt.test, body=filter_loop(stmt.body), orelse=filter_loop(stmt.orelse))
-        else:
-            return ast.Expr(stmt.test)
-    if isinstance(stmt, (ast.Assign, ast.AugAssign, ast.Expr)):
-        return stmt
-    if isinstance(stmt, (ast.For, ast.While, ast.Return, ast.Break, ast.Continue, ast.Pass)):
-        return None
-    raise TypeError(f'unexpected statement type {type(stmt)}')
-
-
-# remove loops and breaks: for, while, return, break, continue, pass
-def filter_loop(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    return list(filter(lambda x: x is not None, map(filter_loop_sub, stmts)))
-
-
-def union(x: set, y: set) -> set:
-    return x | y
-
-
-# "get variables"
-# extract variables from the given source code
-def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal["load", "store", "both"]) -> set[str]:
-    match code:
-        case [*_] as nodes:
-            return reduce(union, map(partial(get_vars, ctx=ctx), nodes), set())
-        case ast.AST() as node:
-            match ctx:
-                case "load":
-                    if isinstance(node, ast.AugAssign):
-                        return get_vars(node.target, "store") | get_vars(node.value, "load")
-                    if isinstance(node, ast.Name):
-                        return {node.id} if isinstance(node.ctx, ast.Load) else set()
-                case "store":
-                    if isinstance(node, ast.Name):
-                        return {node.id} if isinstance(node.ctx, ast.Store) else set()
-                case "both":
-                    if isinstance(node, ast.Name):
-                        return {node.id}
-                case _:
-                    raise ValueError
-            return reduce(union, map(partial(get_vars, ctx=ctx), ast.iter_child_nodes(node)), set())
-        case _:
-            raise TypeError
-
-
-# "get memory-related variables"
-# extract variables related to memory accesses
-def get_mem_rel_vars(code: ast.AST | Sequence[ast.AST]) -> set[str]:
-    match code:
-        case [*_] as nodes:
-            return reduce(union, map(get_mem_rel_vars, nodes), set())
-        case ast.AST() as node:
-            match node:
-                case ast.Call(func=ast.Name()):
-                    if node.func.id in memory_access_func:
-                        return get_vars(node.args, "load")
-                case ast.Call(func=ast.Attribute()):
-                    if node.func.attr in memory_access_method:
-                        return get_vars(node.args, "load")
-                case ast.Call():
-                    raise NotImplementedError(f'unsupported callable type {type(node.func)}')
-            return reduce(union, map(get_mem_rel_vars, ast.iter_child_nodes(node)), set())
-        case _:
-            raise TypeError
-
-
-# "filter memory-related statements"
-# extract statements related to memory accesses
-# NOTE: currently rough (sufficient but not necessary) implementation
-def filter_mem_rel_stmts(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    # extract variables related to memory accesses and variables necessary to calculate them (recursively)
-    needed_vars = get_mem_rel_vars(stmts)
-    while True:
-        ischanged = False
-        for s in reversed(stmts):
-            if get_vars(s, "store") & needed_vars:
-                if not get_vars(s, "load") <= needed_vars:
-                    ischanged = True
-                    needed_vars |= get_vars(s, "load")
-        if not ischanged:
-            break
-    # extract statements related to memory accesses and statements to calculate data necessary for memory accesses
-    filtered_stmts: list[ast.stmt] = []
-    for s in stmts:
-        if find_memory_access([s]) or (get_vars(s, "store") & needed_vars):
-            filtered_stmts.append(s)
-    return filtered_stmts
-
-
-def rename_vars_sub(node: ast.AST, vars: set[str], suffix: list[str]) -> None:
-    if isinstance(node, ast.Name):
-        if node.id in vars:
-            node.id = '_'.join([node.id] + suffix)
-    for n in ast.iter_child_nodes(node):
-        rename_vars_sub(n, vars, suffix)
-
-
-# rename the specified variables (`vars`) in the given statements (`stmts`) by adding the given suffix (`suffix`)
-# example: foo -> foo_bar_2 if suffix = ['bar', '2']
-def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: list[str]) -> list[ast.stmt]:
-    ret = []
-    for stmt in stmts:
-        copied_stmt = copy.deepcopy(stmt)
-        rename_vars_sub(copied_stmt, vars, suffix)
-        ret.append(copied_stmt)
-    return ret
-
-
-def temporary(stmts: list[ast.stmt]) -> list[ast.stmt]:
+def temporary(stmts: list[ast.stmt], ram_list: list[str]) -> list[ast.stmt]:
     ret: list[ast.stmt] = []
     for s in stmts:
-        if isinstance(s, (ast.For, ast.While)) or not find_memory_access([s]):
+        if isinstance(s, (ast.For, ast.While)) or not any([find_dma(s, r) for r in ram_list]):
             ret.append(s)
     return ret
 
@@ -306,7 +237,6 @@ class CompileVisitor(ast.NodeVisitor):
         self.clk = clk
         self.rst = rst
         self.main_fsm = fsm
-        self.prefetch_fsm = None
         self.fsm = self.main_fsm
         self.prefetch_count = 0
 
@@ -321,6 +251,14 @@ class CompileVisitor(ast.NodeVisitor):
 
         for func in functions.values():
             self.scope.addFunction(func)
+
+        frame_scope: dict[str, Any] = dict()
+        frame_scope.update(self.start_frame.f_globals)
+        frame_scope.update(self.start_frame.f_locals)
+        self.rams: list[str] = []
+        for name, value in frame_scope.items():
+            if isinstance(value, Inchworm):
+                self.rams.append(name)
 
     # -------------------------------------------------------------------------
     def visit(self, node):
@@ -575,11 +513,8 @@ class CompileVisitor(ast.NodeVisitor):
 
         filtered_body = filter_loop(body)
 
-        scope: dict[str, Any] = dict()
-        scope.update(self.start_frame.f_locals)
-        scope.update(self.start_frame.f_globals)
-        for name, value in scope.items():
-            if isinstance(value, Inchworm) and find_dma(filtered_body, name):
+        for ram in self.rams:
+            if find_dma(filtered_body, ram):
                 def isbound(var: str) -> bool:
                     try:
                         self.getVariable(var)
@@ -591,8 +526,8 @@ class CompileVisitor(ast.NodeVisitor):
                 prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
                 self.prefetch_count += 1
 
-                modified_vars = get_vars(body, "store")
-                prefetch_body = filter_dma_related_stmts(filtered_body, name)
+                modified_vars = get_vars(body, 'store')
+                prefetch_body = filter_dma_related_stmts(filtered_body, ram)
                 renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
                 print(ast.unparse(filtered_body))
                 print()
@@ -604,8 +539,8 @@ class CompileVisitor(ast.NodeVisitor):
                 prefetch_iter_node = self.getTmpVariable()
 
                 # change from main FSM to prefetch FSM
-                self.prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
-                self.fsm = self.prefetch_fsm
+                prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
+                self.fsm = prefetch_fsm
 
                 self.pushScope()
 
@@ -647,7 +582,7 @@ class CompileVisitor(ast.NodeVisitor):
                 # change from prefetch FSM to main FSM
                 self.fsm = self.main_fsm
 
-        body = temporary(body)
+        body = temporary(body, self.rams)
 
         self.pushScope()
 
