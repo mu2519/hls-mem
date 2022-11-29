@@ -1,10 +1,10 @@
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import annotations
 
 import numpy as np
 import itertools
 from collections import OrderedDict
 from math import log, ceil
+from typing import TYPE_CHECKING
 
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fx
@@ -12,6 +12,10 @@ import veriloggen.types.util as util
 import veriloggen.types.rom as rom
 import veriloggen.types.ram as ram
 from veriloggen.seq.seq import make_condition as _make_condition
+
+if TYPE_CHECKING:
+    from veriloggen.core.module import Module
+    from veriloggen.seq.seq import Seq
 
 from . import mul
 from . import div
@@ -83,7 +87,7 @@ class _Node(object):
     def __eq__(self, other):
         return (id(self), self.object_id) == (id(other), other.object_id)
 
-    def name(self, prefix=None):
+    def name(self, prefix: str | None = None) -> str:
         clsname = self.__class__.__name__.lower()
         if prefix is None:
             prefix = 'tmp'
@@ -107,12 +111,12 @@ class _Numeric(_Node):
         _Node.__init__(self)
 
         # set up by _set_managers()
-        self.m = None
+        self.m: Module | None = None
         self.strm = None
-        self.seq = None
+        self.seq: Seq | None = None
 
-        self.output_data = None
-        self.output_sig_data = None
+        self.output_data: vtypes.Output | vtypes.Wire | str | None = None
+        self.output_sig_data: vtypes.Output | vtypes.Wire | None = None
 
         self.output_node = None
 
@@ -133,7 +137,7 @@ class _Numeric(_Node):
         # stage numbers NOT incremented
         self.previous_value = OrderedDict()
 
-    def output(self, data):
+    def output(self, data: vtypes.Output | vtypes.Wire | str):
         if self.output_data is not None:
             raise ValueError('output_data is already assigned.')
         self.output_data = data
@@ -215,7 +219,7 @@ class _Numeric(_Node):
     def _implement_input(self, m, seq, aswire=False):
         raise NotImplementedError('_implement_input() is not implemented.')
 
-    def _implement_output(self, m, seq, aswire=False):
+    def _implement_output(self, m: Module, seq: Seq, aswire=False):
         if self.end_stage is None:
             self.end_stage = 0
 
@@ -224,7 +228,7 @@ class _Numeric(_Node):
 
         m.Assign(data(self.sig_data))
 
-    def _implement_output_sig(self, m, seq, aswire=False):
+    def _implement_output_sig(self, m: Module, seq: Seq, aswire=False):
         if self.output_sig_data is not None:
             return
 
@@ -2834,7 +2838,7 @@ class _Variable(_Numeric):
 
         self.sig_data = self.input_data.sig_data
 
-    def _implement_input(self, m, seq, aswire=False):
+    def _implement_input(self, m: Module, seq: Seq, aswire=False):
         if self.input_data is None:
             raise TypeError("'input_data' must not be None")
 
@@ -2857,7 +2861,7 @@ class _Variable(_Numeric):
         else:
             self.sig_data = type_i(self.input_data, width, signed=signed)
 
-    def _implement_output(self, m, seq, aswire=False):
+    def _implement_output(self, m: Module, seq: Seq, aswire=False):
         if isinstance(self.input_data, _Numeric):
             if self.input_data.output_sig_data is None:
                 self.input_data._implement_output(m, seq, aswire)

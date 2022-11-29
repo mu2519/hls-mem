@@ -15,14 +15,26 @@ from veriloggen.stream.stypes import SubstreamMultiCycle as BaseSubstreamMultiCy
 from veriloggen.stream.stypes import _and_vars
 
 from . import compiler
+from .ram import RAM
+from .fifo import FIFO
+from .inchworm import Inchworm
 
-mode_width = 5
+
+# Relevant variables
+# mode_*, var.source_*
+
+# Relevant methods
+# source, set_source*, _set_source*, _setup_source_*, _synthesize_set_source*
+
+
+mode_width = 6
 mode_idle = vtypes.Int(0, mode_width, base=2)
 mode_ram_normal = vtypes.Int(1 << 0, mode_width, base=2)
 mode_ram_pattern = vtypes.Int(1 << 1, mode_width, base=2)
 mode_ram_multipattern = vtypes.Int(1 << 2, mode_width, base=2)
 mode_ram_generator = vtypes.Int(1 << 3, mode_width, base=2)
 mode_fifo = vtypes.Int(1 << 4, mode_width, base=2)
+mode_inchworm = vtypes.Int(1 << 5, mode_width, base=2)
 
 generator_id_width = 16
 
@@ -48,6 +60,7 @@ class Stream(BaseStream):
                       'set_source_generator',
                       'set_source_fifo',
                       'set_source_empty',
+                      'set_source_inchworm',
                       'set_sink',
                       'set_sink_pattern', 'set_sink_multidim',
                       'set_sink_multipattern',
@@ -133,7 +146,7 @@ class Stream(BaseStream):
         self.is_root = self.module.Wire('_'.join(['', self.name, 'is_root']))
         self.is_root.assign(1)
 
-        self.sources: OrderedDict[str, stypes._Numeric] = OrderedDict()
+        self.sources: OrderedDict[str, stypes._Variable] = OrderedDict()
         self.sinks: OrderedDict[str, stypes._Numeric] = OrderedDict()
         self.parameters = OrderedDict()
         self.substreams = []
@@ -156,7 +169,7 @@ class Stream(BaseStream):
         self.terminates = []
 
         self.buf_id_count = 1  # '0' is reserved for idle
-        self.buf_id_map = OrderedDict()  # key: buf._id(), value: count
+        self.buf_id_map: OrderedDict[int, int] = OrderedDict()  # key: buf._id(), value: count
 
         self.fsm_id_count = 0
 
@@ -202,10 +215,13 @@ class Stream(BaseStream):
         var.source_count = self.module.Reg('_%s_source_count' % prefix,
                                            self.addrwidth + 1, initval=0)
 
-        # 5'b00000: set_source_empty, 5'b00001: set_source,
-        # 5'b00010: set_source_pattern, 5'b00100: set_source_multipattern,
-        # 5'b01000: set_source_generator,
-        # 5'b10000: set_source_fifo
+        # 6'b000000: set_source_empty,
+        # 6'b000001: set_source,
+        # 6'b000010: set_source_pattern,
+        # 6'b000100: set_source_multipattern,
+        # 6'b001000: set_source_generator,
+        # 6'b010000: set_source_fifo,
+        # 6'b100000: set_source_inchworm
         var.source_mode = self.module.Reg('_%s_source_mode' % prefix, mode_width,
                                           initval=mode_idle)
 
@@ -248,7 +264,7 @@ class Stream(BaseStream):
         var.source_multipat_stride_bufs = None
 
         # RAM, FIFO
-        var.source_id_map = OrderedDict()
+        var.source_id_map: OrderedDict[int, int] = OrderedDict()
         var.source_sel = self.module.Reg('_%s_source_sel' % prefix,
                                          self.ram_sel_width, initval=0)
 
@@ -265,6 +281,11 @@ class Stream(BaseStream):
                                               initval=0)
         var.source_fifo_rdata = self.module.Wire('_%s_source_fifo_rdata' % prefix,
                                                  datawidth)
+
+        # Inchworm
+        var.source_inchworm_raddr = self.module.Reg(f'_{prefix}_source_inchworm_raddr', self.addrwidth, initval=0)
+        var.source_inchworm_renable = self.module.Reg(f'_{prefix}_source_inchworm_renable', 1, initval=0)
+        var.source_inchworm_rdata = self.module.Wire(f'_{prefix}_source_inchworm_rdata', datawidth)
 
         # empty
         var.has_source_empty = False
@@ -687,14 +708,12 @@ class Stream(BaseStream):
 
         return var
 
-    # `name` is actually name (string) or ID (integer)
-    def set_source(self, fsm: FSM, name: vtypes.StrLike | vtypes.IntLike, ram, offset, size, stride=1, port=0):
+    def set_source(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
         """ intrinsic method to assign RAM property to a source stream """
         self._set_source(fsm, name, ram, offset, size, stride, port)
         fsm.goto_next()
 
-    # `name` is actually name (string) or ID (integer)
-    def _set_source(self, fsm: FSM, name: vtypes.StrLike | vtypes.IntLike, ram, offset, size, stride=1, port=0):
+    def _set_source(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -937,12 +956,12 @@ class Stream(BaseStream):
         self._setup_source_ram(ram, var, port, set_cond)
         self._synthesize_set_source_generator(var, name, func, initvals, args)
 
-    def set_source_fifo(self, fsm: FSM, name, fifo, size):
+    def set_source_fifo(self, fsm: FSM, name: vtypes.StrLike, fifo: FIFO, size):
         """ intrinsic method to assign FIFO property to a source stream """
         self._set_source_fifo(fsm, name, fifo, size)
         fsm.goto_next()
 
-    def _set_source_fifo(self, fsm: FSM, name, fifo, size):
+    def _set_source_fifo(self, fsm: FSM, name: vtypes.StrLike, fifo: FIFO, size):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1019,6 +1038,35 @@ class Stream(BaseStream):
         var.write(wdata, wenable)
 
         var.has_source_empty = True
+
+    def set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size):
+        self._set_source_inchworm(fsm, name, inchworm, size)
+        fsm.goto_next()
+
+    def _set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size):
+        if not self.stream_synthesized:
+            self._implement_stream()
+
+        if isinstance(name, str):
+            var = self.var_name_map[name]
+        elif isinstance(name, vtypes.Str):
+            name = name.value
+            var = self.var_name_map[name]
+        else:
+            raise TypeError
+
+        if name not in self.sources:
+            raise NameError(f'No such stream {name}')
+
+        set_cond = self._set_flag(fsm)
+
+        self.seq.If(set_cond)(
+            var.source_mode(mode_inchworm),
+            var.source_size(size)
+        )
+
+        self._setup_source_inchworm(inchworm, var, set_cond)
+        self._synthesize_set_source_inchworm(var, name)
 
     def set_sink(self, fsm: FSM, name, ram, offset, size, stride=1, port=0):
         """ intrinsic method to assign RAM property to a sink stream """
@@ -1916,7 +1964,7 @@ class Stream(BaseStream):
         start_value = self.seq.Prev(v, 1, cond=self.oready)
         return start_value
 
-    def _setup_source_ram(self, ram, var, port, set_cond):
+    def _setup_source_ram(self, ram: RAM, var: stypes._Variable, port: int, set_cond: vtypes.Wire):
         if ram._id() in var.source_id_map:
             ram_id = var.source_id_map[ram._id()]
             self.seq.If(set_cond)(
@@ -1937,10 +1985,11 @@ class Stream(BaseStream):
             var.source_sel(ram_id)
         )
 
+        # read data
         ram_cond = (var.source_sel == ram_id)
         renable = vtypes.Ands(self.oready, var.source_ram_renable, ram_cond)
 
-        d, v = ram.read_rtl(var.source_ram_raddr, port=port, cond=renable)
+        d, _ = ram.read_rtl(var.source_ram_raddr, port=port, cond=renable)
 
         d_out = d
         util.add_mux(var.source_ram_rdata, ram_cond, d_out)
@@ -2031,7 +2080,7 @@ class Stream(BaseStream):
             vtypes.Display(fmt, dump_ram_step, age, addr, data)
         )
 
-    def _synthesize_set_source(self, var, name):
+    def _synthesize_set_source(self, var: stypes._Variable, name: str):
         if var.source_fsm is not None:
             return
 
@@ -2487,7 +2536,7 @@ class Stream(BaseStream):
 
         fsm.If(self.oready).goto_init()
 
-    def _setup_source_fifo(self, fifo, var, set_cond):
+    def _setup_source_fifo(self, fifo: FIFO, var: stypes._Variable, set_cond: vtypes.Wire):
         if fifo._id() in var.source_id_map:
             fifo_id = var.source_id_map[fifo._id()]
             self.seq.If(set_cond)(
@@ -2508,10 +2557,11 @@ class Stream(BaseStream):
             var.source_sel(fifo_id)
         )
 
+        # read data
         fifo_cond = (var.source_sel == fifo_id)
         deq = vtypes.Ands(self.oready, var.source_fifo_deq, fifo_cond)
 
-        d, v, ready = fifo.deq_rtl(cond=deq)
+        d, _, ready = fifo.deq_rtl(cond=deq)
 
         d_out = d
         util.add_mux(var.source_fifo_rdata, fifo_cond, d_out)
@@ -2594,7 +2644,7 @@ class Stream(BaseStream):
             vtypes.Display(fmt, dump_fifo_step, age, data)
         )
 
-    def _synthesize_set_source_fifo(self, var, name):
+    def _synthesize_set_source_fifo(self, var: stypes._Variable, name: str):
         if var.source_fsm is not None:
             return
 
@@ -2641,6 +2691,90 @@ class Stream(BaseStream):
         # force flush
         self.seq.If(var.source_fsm.here, self.source_stop, self.oready)(
             var.source_fifo_deq(0),
+            var.source_idle(1)
+        )
+        var.source_fsm.If(self.source_stop, self.oready).goto_init()
+
+    def _setup_source_inchworm(self, inchworm: Inchworm, var: stypes._Variable, set_cond: vtypes.Wire):
+        if inchworm._id() in var.source_id_map:
+            inchworm_id = var.source_id_map[inchworm._id()]
+            self.seq.If(set_cond)(
+                var.source_sel(inchworm_id)
+            )
+            return
+
+        if inchworm._id() not in self.buf_id_map:
+            inchworm_id = self.buf_id_count
+            self.buf_id_count += 1
+            self.buf_id_map[inchworm._id()] = inchworm_id
+        else:
+            inchworm_id = self.buf_id_map[inchworm._id()]
+
+        var.source_id_map[inchworm._id()] = inchworm_id
+
+        self.seq.If(set_cond)(
+            var.source_sel(inchworm_id)
+        )
+
+        # read data
+        inchworm_cond = (var.source_sel == inchworm_id)
+        renable = vtypes.Ands(self.oready, var.source_inchworm_renable, inchworm_cond)
+
+        rdata, _ = inchworm.ram.read_rtl(inchworm.base + var.source_inchworm_raddr, 0, renable)
+
+        util.add_mux(var.source_inchworm_rdata, inchworm_cond, rdata)
+
+        # stall control
+        cond = vtypes.Land(self.source_busy, inchworm_cond)
+        inchworm_oready = vtypes.Lor(vtypes.Cond(var.source_inchworm_renable, vtypes.Or(var.source_count == 1, var.source_inchworm_raddr + 1 < inchworm.limit), inchworm.limit > 0), var.source_idle)  # doubtful!
+        util.add_disable_cond(self.oready, cond, inchworm_oready)
+
+    def _synthesize_set_source_inchworm(self, var: stypes._Variable, name: str):
+        if var.source_fsm is not None:
+            return
+
+        source_start = vtypes.Land(self.source_start, vtypes.And(var.source_mode, mode_inchworm))
+
+        self.seq.If(source_start, self.oready)(
+            var.source_idle(0),
+            var.source_size_buf(var.source_size)
+        )
+
+        wdata = var.source_inchworm_rdata
+        wenable = vtypes.Ands(self.oready, self.source_busy, self.is_root)
+        var.write(wdata, wenable)
+
+        fsm_id = self.fsm_id_count
+        self.fsm_id_count += 1
+
+        prefix = self._prefix(name)
+        fsm_name = f'_{prefix}_source_fsm_{fsm_id}'
+        var.source_fsm = FSM(self.module, fsm_name, self.clock, self.reset, as_module=self.fsm_as_module)
+
+        var.source_fsm.If(source_start, self.oready).goto_next()
+
+        self.seq.If(var.source_fsm.here, self.oready)(
+            var.source_inchworm_raddr(0),
+            var.source_inchworm_renable(1),
+            var.source_count(var.source_size_buf)
+        )
+
+        var.source_fsm.If(self.oready).goto_next()
+
+        self.seq.If(var.source_fsm.here, self.oready)(
+            var.source_inchworm_raddr.inc(),
+            var.source_inchworm_renable(1),
+            var.source_count.dec()
+        )
+        self.seq.If(var.source_fsm.here, var.source_count == 1, self.oready)(
+            var.source_inchworm_renable(0),
+            var.source_idle(1)
+        )
+        var.source_fsm.If(var.source_count == 1, self.oready).goto_init()
+
+        # force flush
+        self.seq.If(var.source_fsm.here, self.source_stop, self.oready)(
+            var.source_inchworm_renable(0),
             var.source_idle(1)
         )
         var.source_fsm.If(self.source_stop, self.oready).goto_init()

@@ -48,6 +48,8 @@ class Inchworm:
             self.limit = m.Reg(name + '_limit', addrwidth + 2, signed=False, initval=0)
 
         self.seq = Seq(m, name + '_seq', clk, rst)
+        self.seq.add_reset(self.front)
+        self.seq.add_reset(self.base)
 
         # synchronization
         if mode == 'rw':
@@ -383,3 +385,6 @@ class Inchworm:
             tgt.assign(cond)
         else:
             tgt.assign_value.statement.right = vtypes.Lor(cond, tgt.assign_value.statement.right)
+
+    def _id(self):
+        return id(self)

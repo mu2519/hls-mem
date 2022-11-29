@@ -26,8 +26,8 @@ def mkLed():
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
-    addrwidth = 10
-    ram_a = vthread.RAM(m, 'ram_a', clk, rst, datawidth, addrwidth)
+    addrwidth = 4
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth, mode='ro')
     ram_b = vthread.RAM(m, 'ram_b', clk, rst, datawidth, addrwidth)
     ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
 
@@ -43,7 +43,7 @@ def mkLed():
     strm.sink(sum, 'sum', when=sum_valid, when_name='sum_valid')
 
     def strm_madd(size, waddr):
-        strm.set_source('a', ram_a, 0, size)
+        strm.set_source_inchworm('a', ram_a, size)
         strm.set_source('b', ram_b, 0, size)
         strm.set_parameter('size', size)
         strm.set_sink('sum', ram_c, waddr, 1)
@@ -67,17 +67,26 @@ def mkLed():
         a_addr, c_addr = a_offset, c_offset
 
         for i in range(matrix_size):
-            maxi.dma_read(ram_a, 0, a_addr, matrix_size)
+            ram_a.rebase()
+            ram_a.dma_read(maxi, a_addr, matrix_size, 8)
 
             b_addr = b_offset
             for j in range(matrix_size):
+                maxi.lock()
                 maxi.dma_read(ram_b, 0, b_addr, matrix_size)
+                maxi.unlock()
 
                 strm_madd(matrix_size, j)
 
                 b_addr += matrix_size * (datawidth // 8)
 
+            for k in range(matrix_size):
+                ram_a.release()
+
+            maxi.lock()
             maxi.dma_write(ram_c, 0, c_addr, matrix_size)
+            maxi.unlock()
+
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
 
