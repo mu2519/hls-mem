@@ -26,10 +26,9 @@ def mkLed():
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
-    addrwidth = 5
-    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, addrwidth, mode='ro')
-    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, addrwidth, mode='ro')
-    ram_c = vthread.RAM(m, 'ram_c', clk, rst, datawidth, addrwidth)
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, 4, mode='ro')
+    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, 4, mode='ro')
+    ram_c = vthread.Inchworm(m, 'ram_c', clk, rst, datawidth, 1, mode='wo')
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst, datawidth, length=8)
@@ -41,14 +40,6 @@ def mkLed():
     size = strm.parameter('size')
     sum, sum_valid = strm.ReduceAddValid(a * b, size)
     strm.sink(sum, 'sum', when=sum_valid, when_name='sum_valid')
-
-    def strm_madd(size, waddr):
-        strm.set_source_inchworm('a', ram_a, size)
-        strm.set_source_inchworm('b', ram_b, size)
-        strm.set_parameter('size', size)
-        strm.set_sink('sum', ram_c, waddr, 1)
-        strm.run()
-        strm.join()
 
     def matmul():
         while True:
@@ -67,27 +58,33 @@ def mkLed():
         a_addr, c_addr = a_offset, c_offset
 
         for i in range(matrix_size):
-            ram_a.rebase()
             ram_a.dma_read(maxi, a_addr, matrix_size, 8)
 
             b_addr = b_offset
             for j in range(matrix_size):
-                ram_b.rebase()
                 ram_b.dma_read(maxi, b_addr, matrix_size, 8)
 
-                strm_madd(matrix_size, j)
+                strm.set_source_inchworm('a', ram_a, matrix_size)
+                strm.set_source_inchworm('b', ram_b, matrix_size)
+                strm.set_parameter('size', matrix_size)
+                strm.set_sink_inchworm('sum', ram_c, 1)
+                strm.run()
+                strm.join()
+
+                ram_c.release()
+                ram_c.rebase()
 
                 for k in range(matrix_size):
                     ram_b.release()
+                ram_b.rebase()
 
                 b_addr += matrix_size * (datawidth // 8)
 
             for k in range(matrix_size):
                 ram_a.release()
+            ram_a.rebase()
 
-            maxi.lock()
-            maxi.dma_write(ram_c, 0, c_addr, matrix_size)
-            maxi.unlock()
+            ram_c.dma_write(maxi, c_addr, matrix_size, 2)
 
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)

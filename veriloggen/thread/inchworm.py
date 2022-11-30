@@ -293,11 +293,11 @@ class Inchworm:
             block_size_in_bytes = block_size * word_size
 
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_read_addr')  # address in bytes
-        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
+        size = self.m.TmpReg(axi.addrwidth + 1, signed=False, prefix='dma_read_size')  # size in words
 
         # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
         # otherwise, transfer the data whose size is equal to the block size
-        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_read_next_transfer_size')
+        next_transfer_size = self.m.TmpWire(axi.addrwidth + 1, signed=False, prefix='dma_read_next_transfer_size')
         next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
 
         fsm(
@@ -345,11 +345,11 @@ class Inchworm:
             block_size_in_bytes = block_size * word_size
 
         addr = self.m.TmpReg(axi.addrwidth, signed=False, prefix='dma_write_addr')  # address in bytes
-        size = self.m.TmpReg(self.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
+        size = self.m.TmpReg(axi.addrwidth + 1, signed=False, prefix='dma_write_size')  # size in words
 
         # if the size of the remaining data is equal to or less than the block size, transfer the whole of the remaining data
         # otherwise, transfer the data whose size is equal to the block size
-        next_transfer_size = self.m.TmpWire(self.addrwidth + 1, signed=False, prefix='dma_write_next_transfer_size')
+        next_transfer_size = self.m.TmpWire(axi.addrwidth + 1, signed=False, prefix='dma_write_next_transfer_size')
         next_transfer_size.assign(vtypes.Cond(size <= block_size_in_words, size, block_size_in_words))
 
         fsm(
