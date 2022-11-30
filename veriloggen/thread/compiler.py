@@ -600,7 +600,7 @@ class CompileVisitor(ast.NodeVisitor):
                 self.fsm = self.main_fsm
 
         body = temporary(body, self.rams)
-        body = temporary2(body)
+        # body = temporary2(body)
 
         print(ast.unparse(body))
         print()
