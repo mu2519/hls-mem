@@ -191,16 +191,19 @@ class Inchworm:
         return rdata_wire, rvalid, rlast
 
     def release(self, fsm: FSM) -> None:
+        self._release(fsm.here)
+        fsm.goto_next()
+
+    def _release(self, *cond) -> None:
         if self.mode == 'ro':
-            self.seq.If(fsm.here)(
+            self.seq.If(cond)(
                 self.front.inc()
             )
-            self._add_cond(self.dec_occ, fsm.here)
+            self._add_cond(self.dec_occ, cond)
         elif self.mode == 'wo':
-            self._add_cond(self.inc_occ, fsm.here)
+            self._add_cond(self.inc_occ, cond)
         else:
-            self._add_cond(self.inc_occ[0], fsm.here)
-        fsm.goto_next()
+            self._add_cond(self.inc_occ[0], cond)
 
     def enqueue(self, fsm: FSM, data: vtypes.IntegralType) -> None:
         if self.mode == 'wo':

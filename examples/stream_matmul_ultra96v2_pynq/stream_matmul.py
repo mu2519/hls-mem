@@ -26,9 +26,9 @@ def mkLed():
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
-    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, 4, mode='ro')
-    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, 4, mode='ro')
-    ram_c = vthread.Inchworm(m, 'ram_c', clk, rst, datawidth, 1, mode='wo')
+    ram_a = vthread.Inchworm(m, 'ram_a', clk, rst, datawidth, 5, mode='ro')
+    ram_b = vthread.Inchworm(m, 'ram_b', clk, rst, datawidth, 5, mode='ro')
+    ram_c = vthread.Inchworm(m, 'ram_c', clk, rst, datawidth, 5, mode='wo')
 
     maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth)
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst, datawidth, length=8)
@@ -58,33 +58,30 @@ def mkLed():
         a_addr, c_addr = a_offset, c_offset
 
         for i in range(matrix_size):
-            ram_a.dma_read(maxi, a_addr, matrix_size, 8)
+            ram_a.dma_read(maxi, a_addr, matrix_size, 16)
 
             b_addr = b_offset
             for j in range(matrix_size):
-                ram_b.dma_read(maxi, b_addr, matrix_size, 8)
+                ram_b.dma_read(maxi, b_addr, matrix_size, 16)
 
-                strm.set_source_inchworm('a', ram_a, matrix_size)
-                strm.set_source_inchworm('b', ram_b, matrix_size)
+                cond = (j == matrix_size - 1)
+                strm.set_source_inchworm('a', ram_a, matrix_size, release=cond)
+                strm.set_source_inchworm('b', ram_b, matrix_size, release=True)
                 strm.set_parameter('size', matrix_size)
                 strm.set_sink_inchworm('sum', ram_c, 1)
                 strm.run()
                 strm.join()
 
+                ram_b.rebase()
+
                 ram_c.release()
                 ram_c.rebase()
 
-                for k in range(matrix_size):
-                    ram_b.release()
-                ram_b.rebase()
-
                 b_addr += matrix_size * (datawidth // 8)
 
-            for k in range(matrix_size):
-                ram_a.release()
             ram_a.rebase()
 
-            ram_c.dma_write(maxi, c_addr, matrix_size, 2)
+            ram_c.dma_write(maxi, c_addr, matrix_size, 16)
 
             a_addr += matrix_size * (datawidth // 8)
             c_addr += matrix_size * (datawidth // 8)
