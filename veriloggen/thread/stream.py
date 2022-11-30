@@ -422,6 +422,7 @@ class Stream(BaseStream):
         data.sink_inchworm_waddr = self.module.Reg(f'_{prefix}_sink_inchworm_waddr', self.addrwidth, initval=0)
         data.sink_inchworm_wenable = self.module.Reg(f'_{prefix}_sink_inchworm_wenable', 1, initval=0)
         data.sink_inchworm_wdata = self.module.Reg(f'_{prefix}_sink_inchworm_wdata', data.width, initval=0)
+        data.sink_inchworm_release = self.module.Reg(f'_{prefix}_sink_inchworm_release', 1, initval=0)
         data.sink_inchworm_flag = self.module.Reg(f'_{prefix}_sink_inchworm_flag', 1, initval=0)
 
         # immediate
@@ -433,6 +434,9 @@ class Stream(BaseStream):
             data.sink_ram_wenable(0),
             data.sink_fifo_enq(0),
             data.sink_inchworm_wenable(0)
+        )
+        self.seq(
+            data.sink_inchworm_release(0)
         )
 
         if when is not None:
@@ -1466,11 +1470,11 @@ class Stream(BaseStream):
             ram_sel(0)  # '0' is reserved for empty
         )
 
-    def set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size):
-        self._set_sink_inchworm(fsm, name, inchworm, size)
+    def set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
+        self._set_sink_inchworm(fsm, name, inchworm, size, release)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size):
+    def _set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1494,7 +1498,7 @@ class Stream(BaseStream):
             var.sink_size(sink_size)
         )
 
-        self._setup_sink_inchworm(inchworm, var, set_cond)
+        self._setup_sink_inchworm(inchworm, var, set_cond, release)
         self._synthesize_set_sink_inchworm(var, name)
 
     def set_parameter(self, fsm: FSM, name, value, raw=False):
@@ -3533,7 +3537,7 @@ class Stream(BaseStream):
         var.sink_fsm.If(wcond, var.sink_count == 1, self.oready).goto_init()
         var.sink_fsm.If(self.sink_stop, self.oready).goto_init()
 
-    def _setup_sink_inchworm(self, inchworm: Inchworm, var: stypes._Numeric, set_cond: vtypes.Reg):
+    def _setup_sink_inchworm(self, inchworm: Inchworm, var: stypes._Numeric, set_cond: vtypes.Reg, release):
         if inchworm._id() in var.sink_id_map:
             inchworm_id = var.sink_id_map[inchworm._id()]
             self.seq.If(set_cond)(
@@ -3562,6 +3566,9 @@ class Stream(BaseStream):
         # stall control
         cond = vtypes.Ands(self.sink_busy, inchworm_cond, var.sink_inchworm_flag)
         util.add_disable_cond(self.oready, cond, var.sink_inchworm_waddr + 1 < inchworm.limit)
+
+        # release control
+        inchworm._release(release, inchworm_cond, var.sink_inchworm_release)
 
     def _synthesize_set_sink_inchworm(self, var: stypes._Numeric, name: str):
         if var.sink_fsm is not None:
@@ -3602,14 +3609,15 @@ class Stream(BaseStream):
             var.sink_inchworm_waddr.inc(),
             var.sink_inchworm_wenable(1),
             var.sink_inchworm_wdata(rdata),
-            var.sink_count.dec()
+            var.sink_count.dec(),
+            var.sink_inchworm_release(1)
         )
 
-        var.sink_fsm.If(wcond, var.sink_count == 1, self.oready)(
+        self.seq.If(var.sink_fsm.here, wcond, var.sink_count == 1, self.oready)(
             var.sink_inchworm_flag(0)
         )
 
-        var.sink_fsm.If(self.sink_stop, self.oready)(
+        self.seq.If(var.sink_fsm.here, self.sink_stop, self.oready)(
             var.sink_inchworm_flag(0)
         )
 

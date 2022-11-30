@@ -68,13 +68,11 @@ def mkLed():
                 strm.set_source_inchworm('a', ram_a, matrix_size, release=cond)
                 strm.set_source_inchworm('b', ram_b, matrix_size, release=True)
                 strm.set_parameter('size', matrix_size)
-                strm.set_sink_inchworm('sum', ram_c, 1)
+                strm.set_sink_inchworm('sum', ram_c, 1, release=True)
                 strm.run()
                 strm.join()
 
                 ram_b.rebase()
-
-                ram_c.release()
                 ram_c.rebase()
 
                 b_addr += matrix_size * (datawidth // 8)
