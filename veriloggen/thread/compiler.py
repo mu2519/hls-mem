@@ -171,6 +171,27 @@ def temporary(stmts: list[ast.stmt], ram_list: list[str]) -> list[ast.stmt]:
     return ret
 
 
+def find_func_call(expr: ast.expr) -> bool:
+    if isinstance(expr, ast.Call):
+        return True
+    else:
+        return any(map(find_func_call, ast.iter_child_nodes(expr)))
+
+
+def temporary2(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    ret: list[ast.stmt] = []
+    for i, s in enumerate(stmts):
+        if isinstance(s, ast.Assign):
+            if find_func_call(s.value) or get_vars(s.targets, 'store') & get_vars(stmts[:i] + stmts[i + 1:], 'load'):
+                ret.append(s)
+        elif isinstance(s, ast.AugAssign):
+            if find_func_call(s.value) or get_vars(s.target, 'store') & get_vars(stmts[:i] + stmts[i + 1:], 'load'):
+                ret.append(s)
+        else:
+            ret.append(s)
+    return ret
+
+
 def _tmp_name(prefix='_tmp_thread'):
     global _tmp_count
     v = _tmp_count
@@ -579,6 +600,10 @@ class CompileVisitor(ast.NodeVisitor):
                 self.fsm = self.main_fsm
 
         body = temporary(body, self.rams)
+        body = temporary2(body)
+
+        print(ast.unparse(body))
+        print()
 
         self.pushScope()
 
