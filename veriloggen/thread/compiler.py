@@ -5,12 +5,13 @@ import copy
 import ast
 import inspect
 import textwrap
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
-from typing import Literal, Any
+from typing import Literal, Any, Callable
 from types import FunctionType, MethodType, FrameType
 
 from veriloggen.fsm.fsm import FSM
+from veriloggen.core.module import Module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.fixed as fxd
 from veriloggen.optimizer import try_optimize as optimize
@@ -31,7 +32,7 @@ def union(x: set, y: set) -> set:
     return x | y
 
 
-def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'both']) -> set[str]:
+def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'both'] = 'both') -> set[str]:
     """
     extract variables which have the specified context
     `ctx`: the context of variables
@@ -57,42 +58,6 @@ def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'b
             return reduce(union, map(partial(get_vars, ctx=ctx), ast.iter_child_nodes(node)), set())
         case _:
             raise TypeError
-
-
-def rename_vars_sub(node: ast.AST, vars: set[str], suffix: list[str]) -> None:
-    if isinstance(node, ast.Name):
-        if node.id in vars:
-            node.id = '_'.join([node.id] + suffix)
-    for n in ast.iter_child_nodes(node):
-        rename_vars_sub(n, vars, suffix)
-
-
-# rename the specified variables (`vars`) in the given statements (`stmts`) by adding the given suffix (`suffix`)
-# example: foo -> foo_bar_2 if suffix = ['bar', '2']
-def rename_vars(stmts: list[ast.stmt], vars: set[str], suffix: list[str]) -> list[ast.stmt]:
-    ret = []
-    for stmt in stmts:
-        copied_stmt = copy.deepcopy(stmt)
-        rename_vars_sub(copied_stmt, vars, suffix)
-        ret.append(copied_stmt)
-    return ret
-
-
-def filter_loop_sub(stmt: ast.stmt) -> ast.stmt | None:
-    if isinstance(stmt, ast.If):
-        if filter_loop(stmt.body) or filter_loop(stmt.orelse):
-            return ast.If(test=stmt.test, body=filter_loop(stmt.body), orelse=filter_loop(stmt.orelse))
-        else:
-            return ast.Expr(stmt.test)
-    elif isinstance(stmt, (ast.For, ast.While)):
-        return None
-    else:
-        return stmt
-
-
-# remove loops: ast.For, ast.While
-def filter_loop(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    return list(filter(lambda x: x is not None, map(filter_loop_sub, stmts)))
 
 
 def find_dma(code: ast.AST | Sequence[ast.AST], ram_name: str) -> bool:
@@ -163,33 +128,221 @@ def filter_dma_related_stmts(stmts: list[ast.stmt], ram_name: str):
     return filtered_stmts
 
 
-def temporary(stmts: list[ast.stmt], ram_list: list[str]) -> list[ast.stmt]:
-    ret: list[ast.stmt] = []
-    for s in stmts:
-        if isinstance(s, (ast.For, ast.While)) or not any([find_dma(s, r) for r in ram_list]):
-            ret.append(s)
-    return ret
-
-
-def find_func_call(expr: ast.expr) -> bool:
-    if isinstance(expr, ast.Call):
-        return True
-    else:
-        return any(map(find_func_call, ast.iter_child_nodes(expr)))
-
-
-def temporary2(stmts: list[ast.stmt]) -> list[ast.stmt]:
-    ret: list[ast.stmt] = []
-    for i, s in enumerate(stmts):
-        if isinstance(s, ast.Assign):
-            if find_func_call(s.value) or get_vars(s.targets, 'store') & get_vars(stmts[:i] + stmts[i + 1:], 'load'):
-                ret.append(s)
-        elif isinstance(s, ast.AugAssign):
-            if find_func_call(s.value) or get_vars(s.target, 'store') & get_vars(stmts[:i] + stmts[i + 1:], 'load'):
-                ret.append(s)
+def make_var_dep_graph_sub(node: ast.AST, rslt: defaultdict[str, set[str]]) -> None:
+    if isinstance(node, (ast.Assign, ast.AugAssign)):
+        if isinstance(node, ast.Assign):
+            dst_vars = get_vars(node.targets)
         else:
-            ret.append(s)
-    return ret
+            dst_vars = get_vars(node.target)
+        src_vars = get_vars(node.value)
+        for v in dst_vars:
+            rslt[v] |= src_vars
+    else:
+        for n in ast.iter_child_nodes(node):
+            make_var_dep_graph_sub(n, rslt)
+
+
+def make_var_dep_graph(node: ast.AST) -> defaultdict[str, set[str]]:
+    """ construct a variable dependency graph from an AST """
+    rslt: defaultdict[str, set[str]] = defaultdict(set)
+    make_var_dep_graph_sub(node, rslt)
+    return rslt
+
+
+def collect_reachable_sub(graph: dict[Any, set], node: Any, visited: set) -> None:
+    if node in visited:
+        return
+    visited.add(node)
+    for n in graph[node]:
+        collect_reachable_sub(graph, n, visited)
+
+
+def collect_reachable(graph: dict[Any, set], start_nodes: set) -> set:
+    """ collect reachable nodes given a graph and a set of start nodes """
+    visited = set()
+    for s in start_nodes:
+        collect_reachable_sub(graph, s, visited)
+    return visited
+
+
+def extract_dma_relevant_sub(node: ast.stmt, ram: str, needed_vars: set[str]) -> ast.stmt | None:
+    if isinstance(node, ast.For) and node.orelse:
+        raise ValueError('for-else statement is not supported')
+    if isinstance(node, ast.While) and node.orelse:
+        raise ValueError('while-else statement is not supported')
+
+    if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
+        body = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.body)
+        body = filter(lambda x: x is not None, body)
+        body = list(body)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.Assign):
+        if get_vars(node.targets) & needed_vars:
+            return node
+    elif isinstance(node, ast.AugAssign):
+        if get_vars(node.target) & needed_vars:
+            return node
+    elif isinstance(node, ast.If):
+        body = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.body)
+        orelse = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.orelse)
+        body = filter(lambda x: x is not None, body)
+        orelse = filter(lambda x: x is not None, orelse)
+        body = list(body)
+        orelse = list(orelse)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            node.orelse = orelse
+            return node
+        elif orelse:
+            node = copy.deepcopy(node)
+            node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
+            node.body = orelse
+            node.orelse = []
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.Pass):
+        return None
+    elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
+        return node
+
+    if find_dma(node, ram):
+        return node
+    else:
+        return None
+
+
+def extract_dma_relevant(node: ast.stmt, ram: str) -> ast.stmt | None:
+    var_dep_graph = make_var_dep_graph(node)
+    needed_vars = collect_reachable(var_dep_graph, get_dma_vars(node, ram))
+    return extract_dma_relevant_sub(node, ram, needed_vars)
+
+
+def find_side_effect(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call):
+        return True
+    return any(map(find_side_effect, ast.iter_child_nodes(node)))
+
+
+def get_side_effect_vars(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Call):
+        return get_vars(node.args) | get_vars([kw.value for kw in node.keywords])
+    return reduce(union, map(get_side_effect_vars, ast.iter_child_nodes(node)), set())
+
+
+def extract_dma_irrelevant_sub(node: ast.stmt, needed_vars: set[str]) -> ast.stmt | None:
+    if isinstance(node, ast.For) and node.orelse:
+        raise ValueError('for-else statement is not supported')
+    if isinstance(node, ast.While) and node.orelse:
+        raise ValueError('while-else statement is not supported')
+
+    if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
+        body = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.body)
+        body = filter(lambda x: x is not None, body)
+        body = list(body)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.Assign):
+        if get_vars(node.targets) & needed_vars:
+            return node
+    elif isinstance(node, ast.AugAssign):
+        if get_vars(node.target) & needed_vars:
+            return node
+    elif isinstance(node, ast.If):
+        body = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.body)
+        orelse = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.orelse)
+        body = filter(lambda x: x is not None, body)
+        orelse = filter(lambda x: x is not None, orelse)
+        body = list(body)
+        orelse = list(orelse)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            node.orelse = orelse
+            return node
+        elif orelse:
+            node = copy.deepcopy(node)
+            node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
+            node.body = orelse
+            node.orelse = []
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.Pass):
+        return None
+    elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
+        return node
+
+    if find_side_effect(node):
+        return node
+    else:
+        return None
+
+
+def eliminate_dma_calls(node: ast.stmt, rams: list[str]) -> ast.stmt | None:
+    if isinstance(node, ast.For) and node.orelse:
+        raise ValueError('for-else statement is not supported')
+    if isinstance(node, ast.While) and node.orelse:
+        raise ValueError('while-else statement is not supported')
+
+    if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
+        body = map(partial(eliminate_dma_calls, rams=rams), node.body)
+        body = filter(lambda x: x is not None, body)
+        body = list(body)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.If):
+        body = map(partial(eliminate_dma_calls, rams=rams), node.body)
+        orelse = map(partial(eliminate_dma_calls, rams=rams), node.orelse)
+        body = filter(lambda x: x is not None, body)
+        orelse = filter(lambda x: x is not None, orelse)
+        body = list(body)
+        orelse = list(orelse)
+        if body:
+            node = copy.deepcopy(node)
+            node.body = body
+            node.orelse = orelse
+            return node
+        elif orelse:
+            node = copy.deepcopy(node)
+            node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
+            node.body = orelse
+            node.orelse = []
+            return node
+        else:
+            return None
+    elif isinstance(node, ast.Pass):
+        return None
+    elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
+        return node
+
+    for r in rams:
+        if find_dma(node, r):
+            return None
+    return node
+
+
+def extract_dma_irrelevant(node: ast.stmt, rams: list[str]) -> ast.stmt | None:
+    node = eliminate_dma_calls(node, rams)
+    if node is None:
+        return None
+    var_dep_graph = make_var_dep_graph(node)
+    needed_vars = collect_reachable(var_dep_graph, get_side_effect_vars(node))
+    return extract_dma_irrelevant_sub(node, needed_vars)
 
 
 def _tmp_name(prefix='_tmp_thread'):
@@ -246,7 +399,7 @@ class FunctionVisitor(ast.NodeVisitor):
 
 class CompileVisitor(ast.NodeVisitor):
 
-    def __init__(self, m, name: str, clk, rst, fsm: FSM,
+    def __init__(self, m: Module, name: str, clk, rst, fsm: FSM,
                  functions: dict[str, ast.FunctionDef],
                  intrinsic_functions: dict[str, FunctionType],
                  intrinsic_methods: dict[str, MethodType],
@@ -258,6 +411,7 @@ class CompileVisitor(ast.NodeVisitor):
         self.clk = clk
         self.rst = rst
         self.main_fsm = fsm
+        self.ram_fsms: dict[str, FSM] = dict()
         self.fsm = self.main_fsm
         self.prefetch_count = 0
 
@@ -268,10 +422,11 @@ class CompileVisitor(ast.NodeVisitor):
         self.datawidth = datawidth
         self.point = point
 
-        self.scope = ScopeFrameList()
-
+        self.main_scope = ScopeFrameList()
         for func in functions.values():
-            self.scope.addFunction(func)
+            self.main_scope.addFunction(func)
+
+        self.scope = self.main_scope
 
         frame_scope: dict[str, Any] = dict()
         frame_scope.update(self.start_frame.f_globals)
@@ -280,6 +435,61 @@ class CompileVisitor(ast.NodeVisitor):
         for name, value in frame_scope.items():
             if isinstance(value, Inchworm):
                 self.rams.append(name)
+
+    def get_ram_fsm(self, name: str) -> FSM:
+        if name in self.ram_fsms:
+            return self.ram_fsms[name]
+        if name not in self.rams:
+            raise KeyError
+        fsm = FSM(self.m, '_'.join([self.name, name, 'fsm']), self.clk, self.rst)
+        self.ram_fsms[name] = fsm
+        # 0 is reserved for idle state
+        fsm.state_count = 1
+        return fsm
+
+    def fork_join(self, node: ast.AST, visit: Callable[[ast.AST], None]) -> None:
+        print(ast.unparse(node))
+        print()
+
+        # fork
+        states: list[vtypes.Reg] = []
+        for ram in self.rams:
+            dma_relevant_code = extract_dma_relevant(node, ram)
+            if dma_relevant_code is None:
+                continue
+
+            print(ast.unparse(dma_relevant_code))
+            print()
+
+            ram_scope = copy.deepcopy(self.main_scope)
+            ram_fsm = self.get_ram_fsm(ram)
+
+            states.append(ram_fsm.state)
+
+            # 0 represents idle
+            ram_fsm.goto_from(0, ram_fsm.current, self.main_fsm.here)
+            self.main_fsm.goto_next()
+
+            self.scope = ram_scope
+            self.fsm = ram_fsm
+            visit(dma_relevant_code)
+            self.scope = self.main_scope
+            self.fsm = self.main_fsm
+
+            # 0 represents idle
+            ram_fsm.goto_from(ram_fsm.current, 0)
+            ram_fsm.inc()
+
+        dma_irrelevant_code = extract_dma_irrelevant(node, self.rams)
+        if dma_irrelevant_code is not None:
+            print(ast.unparse(dma_irrelevant_code))
+            print()
+            visit(dma_irrelevant_code)
+
+        # join
+        if states:
+            # 0 represents idle
+            self.main_fsm.goto_next(vtypes.Ands(*[s == 0 for s in states]))
 
     # -------------------------------------------------------------------------
     def visit(self, node):
@@ -528,82 +738,6 @@ class CompileVisitor(ast.NodeVisitor):
     def _for_range_fsm(self, begin_node, end_node, step_node,
                        iter_node, cond_node, update_node, body: list[ast.stmt],
                        target_update: tuple[Any, Any] | None = None):
-        filtered_body = filter_loop(body)
-
-        for ram in self.rams:
-            if find_dma(filtered_body, ram):
-                def isbound(var: str) -> bool:
-                    try:
-                        self.getVariable(var)
-                    except NameError:
-                        return False
-                    return True
-
-                prefetch_suffix = ['prefetch', str(self.prefetch_count)]
-                prefetch_fsm_name = '_'.join([self.name, 'prefetch', str(self.prefetch_count)])
-                self.prefetch_count += 1
-
-                modified_vars = get_vars(body, 'store')
-                prefetch_body = filter_dma_related_stmts(filtered_body, ram)
-                renamed_body = rename_vars(prefetch_body, modified_vars, prefetch_suffix)
-                print(ast.unparse(filtered_body))
-                print()
-                print(ast.unparse(prefetch_body))
-                print()
-                print(ast.unparse(renamed_body))
-                print()
-
-                prefetch_iter_node = self.getTmpVariable()
-
-                # change from main FSM to prefetch FSM
-                prefetch_fsm = FSM(self.m, prefetch_fsm_name, self.clk, self.rst)
-                self.fsm = prefetch_fsm
-
-                self.pushScope()
-
-                # initialize
-                prefetch_idle_count = self.getFsmCount()
-                self.incFsmCount()
-                prefetch_active_count = self.getFsmCount()
-                copied_vars = list(filter(isbound, modified_vars))
-                if copied_vars:
-                    self.visit(ast.parse(', '.join(map(lambda v: '_'.join([v] + prefetch_suffix), copied_vars)) + ' = ' + ', '.join(copied_vars)))
-                self.setBind(prefetch_iter_node, begin_node)
-                self.setFsm()
-                self.incFsmCount()
-
-                # condition check
-                prefetch_check_count = self.getFsmCount()
-                self.incFsmCount()
-                prefetch_body_begin_count = self.getFsmCount()
-
-                # body
-                for b in renamed_body:
-                    self.visit(b)
-
-                self.popScope()
-
-                prefetch_body_end_count = self.getFsmCount()
-
-                # update
-                self.setBind(prefetch_iter_node, vtypes.Plus(prefetch_iter_node, step_node))
-                self.incFsmCount()
-                prefetch_loop_exit_count = self.getFsmCount()
-
-                self.setFsm(prefetch_body_end_count, prefetch_check_count)
-                self.setFsm(prefetch_check_count, prefetch_body_begin_count, vtypes.LessThan(prefetch_iter_node, end_node), prefetch_loop_exit_count)
-
-                self.setFsm(prefetch_loop_exit_count, prefetch_idle_count)
-                self.setFsm(prefetch_idle_count, prefetch_active_count, self.main_fsm.here)
-
-                # change from prefetch FSM to main FSM
-                self.fsm = self.main_fsm
-
-        body = temporary(body, self.rams)
-        # body = temporary2(body)
-
-        print(ast.unparse(body))
-        print()
 
         self.pushScope()
 
@@ -711,7 +845,10 @@ class CompileVisitor(ast.NodeVisitor):
         # function call
         return self._call_Name_function(node, name)
 
-    def _call_Name_print(self, node):
+    def _call_Name_print(self, node: ast.Call):
+        if node.keywords:
+            raise ValueError('keyword arguments for `print` built-in function are not supported')
+
         # prepare the argument values
         argvalues = []
         formatstring_list = []
@@ -799,7 +936,7 @@ class CompileVisitor(ast.NodeVisitor):
         form = arg.left.s
         return values, form
 
-    def _call_Name_int(self, node):
+    def _call_Name_int(self, node: ast.Call):
         if len(node.args) > 1:
             raise TypeError(
                 'takes %d positional arguments but %d were given' % (1, len(node.args)))
@@ -808,7 +945,7 @@ class CompileVisitor(ast.NodeVisitor):
             argvalues.append(self.visit(arg))
         return argvalues[0]
 
-    def _call_Name_len(self, node):
+    def _call_Name_len(self, node: ast.Call):
         if len(node.args) > 1:
             raise TypeError(
                 'takes %d positional arguments but %d were given' % (1, len(node.args)))
@@ -822,7 +959,7 @@ class CompileVisitor(ast.NodeVisitor):
 
         return vtypes.get_width(value)
 
-    def _call_Name_function(self, node, name):
+    def _call_Name_function(self, node: ast.Call, name: str):
         tree = self.getFunction(name)
 
         # prepare the argument values
@@ -926,7 +1063,12 @@ class CompileVisitor(ast.NodeVisitor):
 
         return ret
 
-    def _visit_next_function(self, node):
+    def _visit_next_function(self, node: ast.FunctionDef):
+        for ram in self.rams:
+            if extract_dma_relevant(node, ram) is not None:
+                self.fork_join(node, self.generic_visit)
+                return vtypes.Int(0)
+
         self.generic_visit(node)
         retvar = self.getReturnVariable()
         if retvar is not None:
@@ -1378,7 +1520,7 @@ class CompileVisitor(ast.NodeVisitor):
             return global_objects[name]
         return None
 
-    def getFunction(self, name):
+    def getFunction(self, name: str) -> ast.FunctionDef:
         func = self.scope.searchFunction(name)
         if func is not None:
             return func
@@ -1450,9 +1592,6 @@ class CompileVisitor(ast.NodeVisitor):
                 var._fsm = self.fsm
 
         self.fsm._add_statement([subst], cond=cond)
-
-        state = self.getFsmCount()
-        self.scope.addBind(state, var, value, cond)
 
     # -------------------------------------------------------------------------
     def setFsm(self, src=None, dst=None, cond=None, else_dst=None):

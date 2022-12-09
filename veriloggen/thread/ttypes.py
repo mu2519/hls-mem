@@ -2,9 +2,11 @@ import functools
 import inspect
 from collections import OrderedDict
 
+from veriloggen.core.module import Module
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.util as util
 from veriloggen.seq.seq import Seq
+from veriloggen.fsm.fsm import FSM
 
 
 __intrinsics__ = ('intrinsic', 'statement', 'subst',
@@ -104,7 +106,7 @@ class Mutex(object):
     __intrinsics__ = ('lock', 'try_lock', 'unlock',
                       'acquire', 'release')
 
-    def __init__(self, m, name, clk, rst, width=32):
+    def __init__(self, m: Module, name: str, clk, rst, width=32):
 
         self.m = m
         self.name = name
@@ -119,10 +121,12 @@ class Mutex(object):
         self.lock_id = self.m.Reg(
             '_'.join(['', self.name, 'lock_id']), self.width, initval=0)
 
-        self.id_map = OrderedDict()
+        self.id_map: OrderedDict[str, int] = OrderedDict()
         self.id_map_count = 0
 
-    def lock(self, fsm):
+    def lock(self, fsm: FSM):
+        """ blocking """
+
         name = fsm.name
         new_lock_id = self._get_id(name)
 
@@ -150,7 +154,9 @@ class Mutex(object):
 
         return 1
 
-    def try_lock(self, fsm):
+    def try_lock(self, fsm: FSM):
+        """ non-blocking """
+
         name = fsm.name
         new_lock_id = self._get_id(name)
 
@@ -180,7 +186,9 @@ class Mutex(object):
 
         return result
 
-    def unlock(self, fsm):
+    def unlock(self, fsm: FSM):
+        """ non-blocking """
+
         name = fsm.name
         new_lock_id = self._get_id(name)
 
@@ -197,14 +205,14 @@ class Mutex(object):
 
         return 0
 
-    def _get_id(self, name):
+    def _get_id(self, name: str):
         if name not in self.id_map:
             self.id_map[name] = self.id_map_count
             self.id_map_count += 1
 
         return self.id_map[name]
 
-    def acquire(self, fsm, blocking=True):
+    def acquire(self, fsm: FSM, blocking=True):
         """ alias of lock() """
 
         if not isinstance(blocking, (bool, int)):
@@ -215,7 +223,7 @@ class Mutex(object):
 
         return self.try_lock(fsm)
 
-    def release(self, fsm):
+    def release(self, fsm: FSM):
         """ alias of unlock() """
 
         return self.unlock(fsm)
@@ -224,20 +232,20 @@ class Mutex(object):
 class _MutexFunction(object):
     __intrinsics__ = ('lock', 'try_lock', 'unlock')
 
-    def _check_mutex(self, fsm):
+    def _check_mutex(self, fsm: FSM):
         if self.mutex is None:
             self.mutex = Mutex(self.m, '_'.join(
                 ['', self.name, 'mutex']), self.clk, self.rst)
 
-    def lock(self, fsm):
+    def lock(self, fsm: FSM):
         self._check_mutex(fsm)
         return self.mutex.lock(fsm)
 
-    def try_lock(self, fsm):
+    def try_lock(self, fsm: FSM):
         self._check_mutex(fsm)
         return self.mutex.try_lock(fsm)
 
-    def unlock(self, fsm):
+    def unlock(self, fsm: FSM):
         self._check_mutex(fsm)
         return self.mutex.unlock(fsm)
 
@@ -245,7 +253,7 @@ class _MutexFunction(object):
 class Barrier(object):
     __intrinsics__ = ('wait', )
 
-    def __init__(self, m, name, clk, rst, numparties):
+    def __init__(self, m: Module, name: str, clk, rst, numparties: int):
 
         self.m = m
         self.name = name
@@ -272,7 +280,7 @@ class Barrier(object):
             self.done(1)
         )
 
-    def wait(self, fsm):
+    def wait(self, fsm: FSM):
 
         self.mutex.lock(fsm)
 
@@ -301,10 +309,10 @@ class Shared(_MutexFunction):
     def value(self):
         return self._value
 
-    def read(self, fsm):
+    def read(self, fsm: FSM):
         return self._value
 
-    def write(self, fsm, value, *part):
+    def write(self, fsm: FSM, value, *part):
         if self.seq is None:
             m = fsm.m
             clk = fsm.clk
@@ -335,7 +343,7 @@ class Shared(_MutexFunction):
         fsm.goto_next()
         return 0
 
-    def _check_mutex(self, fsm):
+    def _check_mutex(self, fsm: FSM):
         if self.mutex is None:
             m = fsm.m
             clk = fsm.clk

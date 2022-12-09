@@ -1,16 +1,12 @@
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
 import functools
 import math
 from collections import defaultdict
 
-import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
 from veriloggen.seq.seq import Seq
 from veriloggen.fsm.fsm import FSM
 from veriloggen.thread.fifo import FIFO
+from veriloggen.core.module import Module
 
 from veriloggen.seq.seq import make_condition
 from . import util
@@ -526,7 +522,7 @@ class AxiMaster(object):
     burst_size_width = 8
     boundary_size = 4096
 
-    def __init__(self, m: module.Module, name: str, clk: vtypes._Variable, rst: vtypes._Variable,
+    def __init__(self, m: Module, name: str, clk: vtypes._Variable, rst: vtypes._Variable,
                  datawidth=32, addrwidth=32,
                  waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
                  raddr_id_width=0, rdata_id_width=0,
@@ -1221,7 +1217,7 @@ class AxiLiteMaster(AxiMaster):
 class AxiSlave(object):
     burst_size_width = 8
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: Module, name, clk, rst, datawidth=32, addrwidth=32,
                  waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
                  raddr_id_width=0, rdata_id_width=0,
                  waddr_user_width=2, wdata_user_width=0, wresp_user_width=0,
@@ -1637,7 +1633,7 @@ class AxiSlave(object):
 
 class AxiLiteSlave(AxiSlave):
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: Module, name, clk, rst, datawidth=32, addrwidth=32,
                  noio=False):
 
         self.m = m

@@ -1,10 +1,8 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
 import veriloggen.core.vtypes as vtypes
 import veriloggen.types.util as util
 import veriloggen.types.axi as axi
 from veriloggen.fsm.fsm import FSM
+from veriloggen.core.module import Module
 
 from .ttypes import _MutexFunction
 
@@ -33,7 +31,7 @@ class AXIS(axi.AxiSlave, _MutexFunction):
 
 
 class AXISLite(axi.AxiLiteSlave, _MutexFunction):
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: Module, name, clk, rst, datawidth=32, addrwidth=32,
                  noio=False):
 
         axi.AxiLiteSlave.__init__(self, m, name, clk, rst, datawidth, addrwidth,
@@ -245,7 +243,7 @@ class AXISLiteRegister(AXISLite):
     __intrinsics__ = ('read', 'write', 'write_flag', 'wait',
                       'wait_flag') + _MutexFunction.__intrinsics__
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
+    def __init__(self, m: Module, name, clk, rst, datawidth=32, addrwidth=32,
                  noio=False, length=4, fsm_as_module=False):
 
         AXISLite.__init__(self, m, name, clk, rst, datawidth, addrwidth,
@@ -340,6 +338,7 @@ class AXISLiteRegister(AXISLite):
         fsm.If(valid).goto_init()
 
     def read(self, fsm, addr):
+        """ word addressing """
         if isinstance(addr, int):
             rval = self.register[addr]
         elif isinstance(addr, vtypes.Int):
@@ -351,6 +350,7 @@ class AXISLiteRegister(AXISLite):
         return rval
 
     def write(self, fsm, addr, value):
+        """ word addressing """
         state_cond = fsm.state == fsm.current
         for i, r in enumerate(self.register):
             self.seq.If(state_cond, addr == i)(

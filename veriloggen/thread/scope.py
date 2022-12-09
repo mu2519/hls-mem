@@ -4,7 +4,13 @@ import copy
 import ast
 from collections import OrderedDict
 from collections.abc import Sequence
-from typing import Any
+from typing import Literal, Any
+
+from veriloggen.core import vtypes
+from veriloggen.types import fixed
+
+
+RegLike = vtypes.Reg | fixed._FixedReg
 
 
 class ScopeName(object):
@@ -17,17 +23,18 @@ class ScopeName(object):
 
 
 class ScopeFrameList(object):
+    """
+    ScopeFrameList is similar to a call stack
+    and not necessarily corresponds to the notion of scopes
+    """
 
     def __init__(self):
-        self.scopeframes: list[ScopeFrame] = []
-        self.scopeframes.append(ScopeFrame(ScopeName(('_',))))
-        self.current: ScopeFrame = self.scopeframes[0]
+        self.current = ScopeFrame(ScopeName(('_',)))
         self.previousframes: OrderedDict[ScopeFrame, ScopeFrame | None] = OrderedDict()
         self.previousframes[self.current] = None
         self.nextframes: OrderedDict[ScopeFrame, list[ScopeFrame]] = OrderedDict()
         self.label_prefix = 's'
         self.label_count = 0
-        self.binds = OrderedDict()
 
     def getNamePrefix(self):
         return self.current.getNamePrefix()
@@ -35,14 +42,13 @@ class ScopeFrameList(object):
     def getCurrent(self):
         return self.current
 
-    def pushScopeFrame(self, name: str | None = None, ftype: str | None = None):
+    def pushScopeFrame(self, name: str | None = None, ftype: Literal['call'] | None = None):
         if name is None:
             name = self.label_prefix + str(self.label_count)
             self.label_count += 1
         prefix = copy.deepcopy(self.current.name.namelist)
         framename = ScopeName(prefix + (name,))
         f = ScopeFrame(framename, ftype)
-        self.scopeframes.append(f)
         self.previousframes[f] = self.current
         if self.current not in self.nextframes:
             self.nextframes[self.current] = []
@@ -52,7 +58,7 @@ class ScopeFrameList(object):
     def popScopeFrame(self):
         self.current = self.previousframes[self.current]
 
-    def addVariable(self, name: str, var: Any):
+    def addVariable(self, name: str, var: RegLike):
         if self.current is None:
             return None
         targ = self.current
@@ -103,14 +109,6 @@ class ScopeFrameList(object):
 
         return None
 
-    def addBind(self, state, dst, var, cond=None):
-        if dst not in self.binds:
-            self.binds[dst] = []
-        self.binds[dst].append((state, var, cond))
-
-    def getBinds(self):
-        return self.binds
-
     def addBreak(self, count):
         self.current.addBreak(count)
 
@@ -120,7 +118,7 @@ class ScopeFrameList(object):
     def addReturn(self, count, value):
         self.current.addReturn(count, value)
 
-    def setReturnVariable(self, var):
+    def setReturnVariable(self, var: RegLike):
         if self.current is None:
             return
         targ = self.current
@@ -213,21 +211,25 @@ class ScopeFrameList(object):
 
 
 class ScopeFrame(object):
+    """
+    ScopeFrame is actually similar to a stack frame
+    and not necessarily corresponds to the notion of scopes
+    """
 
-    def __init__(self, name: ScopeName, ftype: str | None = None):
+    def __init__(self, name: ScopeName, ftype: Literal['call'] | None = None):
         self.name = name
         self.ftype = ftype
-        self.variables: OrderedDict[str, Any] = OrderedDict()
+        self.variables: OrderedDict[str, RegLike] = OrderedDict()
         self.functions: OrderedDict[str, ast.FunctionDef] = OrderedDict()
         self.unresolved_break: list[int] = []
         self.unresolved_continue: list[int] = []
         self.unresolved_return: list[tuple[int, Any]] = []
-        self.returnvariable = None
+        self.returnvariable: RegLike | None = None
 
     def getNamePrefix(self):
         return str(self.name)
 
-    def addVariable(self, name: str, var: Any):
+    def addVariable(self, name: str, var: RegLike):
         self.variables[name] = var
 
     def addFunction(self, func: ast.FunctionDef):
@@ -243,13 +245,6 @@ class ScopeFrame(object):
         if name not in self.functions:
             return None
         return self.functions[name]
-
-    # getter to all-inclusive information
-    def getVariables(self):
-        return tuple(self.variables)
-
-    def getFunctions(self):
-        return self.functions
 
     def addBreak(self, count: int):
         self.unresolved_break.append(count)
@@ -296,7 +291,7 @@ class ScopeFrame(object):
     def clearReturnVariable(self):
         self.returnvariable = None
 
-    def setReturnVariable(self, var):
+    def setReturnVariable(self, var: RegLike):
         self.returnvariable = var
 
     def getReturnVariable(self):
