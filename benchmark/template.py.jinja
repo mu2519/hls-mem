@@ -1,0 +1,172 @@
+import random
+
+import numpy as np
+
+from veriloggen import *
+import veriloggen.thread as vthread
+from veriloggen.types import axi
+
+
+{{ configs }}
+
+
+datawidth = 32
+
+# the capacity of the main memory is 2 ** mem_addrwidth bytes
+axi_datawidth = 32
+axi_addrwidth = 32
+mem_datawidth = 32
+mem_addrwidth = 20
+
+axilite_datawidth = 32
+axilite_addrwidth = 32
+axireg_length = 8
+
+counter_width = 32
+
+simulation_period = 1000000
+
+
+def mkdut() -> Module:
+    m = Module('dut')
+    clk = m.Input('CLK')
+    rst = m.Input('RST')
+
+    counter = m.Reg('counter', counter_width, signed=False, initval=0)
+    seq = Seq(m, 'seq', clk, rst)
+    seq(
+        counter.inc()
+    )
+
+    {{ ram_defs|indent(4) }}
+
+    {%- if strm_defs is defined %}
+    {{ strm_defs|indent(4) }}
+    {%- endif %}
+
+    maxi = vthread.AXIM(m, 'maxi', clk, rst,
+                        datawidth=axi_datawidth,
+                        addrwidth=axi_addrwidth)
+    saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst,
+                                    datawidth=axilite_datawidth,
+                                    addrwidth=axilite_addrwidth,
+                                    length=axireg_length)
+
+    def main():
+        while True:
+            saxi.wait_flag(0, 1)
+            saxi.write(1, 1)  # set busy
+
+            start = counter
+
+            {%- for reg in regs %}
+            {{ reg }} = saxi.read({{ loop.index + 2 }})
+            {%- endfor %}
+
+            comp({{ regs|join(', ') }})
+
+            stop = counter
+
+            time = stop - start
+            saxi.write(2, time)
+
+            saxi.write(1, 0)  # unset busy
+
+    def comp({{ regs|join(', ') }}):
+        {{ comp_body|indent(8) }}
+
+    thd = vthread.Thread(m, 'dut_thd', clk, rst, main)
+    thd.start()
+
+    return m
+
+
+def mktb() -> Module:
+    {{ set_arrs|indent(4) }}
+
+    memimg = np.zeros(2**mem_addrwidth // (mem_datawidth//8), dtype=np.int64)
+
+    {%- for array, offset in arrs %}
+    axi.set_memory(memimg, {{ array }}, mem_datawidth, mem_datawidth, {{ offset }})
+    {%- endfor %}
+
+    dut = mkdut()
+
+    m = Module('tb')
+    ports = m.copy_sim_ports(dut)
+    clk = ports['CLK']
+    rst = ports['RST']
+
+    memory = axi.AxiMemoryModel(m, 'memory', clk, rst,
+                                datawidth=axi_datawidth,
+                                addrwidth=axi_addrwidth,
+                                mem_datawidth=mem_datawidth,
+                                mem_addrwidth=mem_addrwidth,
+                                memimg=memimg, memimg_name='memory_dump')
+    memory.connect(ports, 'maxi')
+
+    _saxi = vthread.AXIMLite(m, '_saxi', clk, rst,
+                             datawidth=axilite_datawidth,
+                             addrwidth=axilite_addrwidth, noio=True)
+    _saxi.connect(ports, 'saxi')
+
+    axilite_wordsize = axilite_datawidth // 8
+
+    def ctrl():
+        for i in range(100):
+            pass
+
+        {%- for reg in regs %}
+        _saxi.write(axilite_wordsize * {{ loop.index + 2 }}, {{ reg }})
+        {%- endfor %}
+
+        # set start
+        _saxi.write(axilite_wordsize * 0, 1)
+
+        # wait not busy
+        while True:
+            busy = _saxi.read(axilite_wordsize * 1)
+            if not busy:
+                break
+
+        time = _saxi.read(axilite_wordsize * 2)
+
+        flag = True
+        {{ check|indent(8) }}
+
+        if flag:
+            print('AC')
+        else:
+            print('WA')
+
+        print('exec time:', time)
+
+        vthread.finish()
+
+    thd = vthread.Thread(m, 'tb_thd', clk, rst, ctrl)
+    thd.start()
+
+    inst = m.Instance(dut, 'inst',
+                      params=m.connect_params(dut),
+                      ports=m.connect_ports(dut))
+
+    simulation.setup_waveform(m, inst)
+    simulation.setup_clock(m, clk, hperiod=5)
+    init = simulation.setup_reset(m, rst, m.make_reset(), period=5)
+    init.add(
+        Delay(simulation_period),
+        Systask('finish')
+    )
+
+    return m
+
+
+def run() -> None:
+    tb = mktb()
+    sim = simulation.Simulator(tb, sim='iverilog')
+    rslt = sim.run()
+    print(rslt)
+
+
+if __name__ == '__main__':
+    run()
