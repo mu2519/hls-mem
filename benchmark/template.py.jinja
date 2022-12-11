@@ -43,11 +43,11 @@ def mkdut() -> Module:
     {{ ram_defs|indent(4) }}
     {%- endif %}
 
-    {%- if rams is defined %}
+    {% if rams is defined %}
     {%- for ram in rams %}
-    {{ ram[0] }} = vthread.RAM(m, '{{ ram[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ ram[1] }})
+    {{ ram[0] }} = vthread.RAM(m, '{{ ram[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ ram[1] }}, numports={{ ram[2]|default(1) }})
     {%- endfor %}
-    {%- endif %}
+    {% endif %}
 
     {%- if strm_defs is defined %}
     {{ strm_defs|indent(4) }}

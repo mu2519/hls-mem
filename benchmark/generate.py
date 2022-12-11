@@ -1,4 +1,6 @@
 import tomllib
+import isort
+import black
 from jinja2 import Environment, FileSystemLoader
 
 
@@ -32,5 +34,7 @@ for k, v in meta.items():
         with open('./cfg/' + n + '.toml', 'rb') as f:
             custom_merge(cfg, tomllib.load(f))
     src = template.render(cfg)
+    src = black.format_str(src, mode=black.Mode())
+    src = isort.code(src)
     with open('./src/' + k + '.py', 'w') as f:
         f.write(src)

@@ -1,0 +1,38 @@
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+a = strm.parameter('a')
+b = strm.source('b')
+c = strm.source('c')
+d = c + a*b
+strm.sink(d, 'd')'''
+
+comp_body = '''
+maxi.dma_read(ram_a_row, 0, a_row_offset, a_height + 1)
+row_begin = ram_a_row.read(0)
+a_col_addr = a_col_offset
+a_val_addr = a_val_offset
+c_addr = c_offset
+for i in range(1, a_height + 1):
+    row_end = ram_a_row.read(i)
+    row_range = row_end - row_begin
+    row_begin = row_end
+    for j in range(b_width):
+        ram_c.write(j, 0)
+    if row_range > 0:
+        maxi.dma_read(ram_a_col, 0, a_col_addr, row_range)
+        maxi.dma_read(ram_a_val, 0, a_val_addr, row_range)
+        a_col_addr += row_range * (datawidth // 8)
+        a_val_addr += row_range * (datawidth // 8)
+        for j in range(row_range):
+            idx = ram_a_col.read(j)
+            b_addr = b_offset + idx * b_width * (datawidth // 8)
+            maxi.dma_read(ram_b, 0, b_addr, b_width)
+            x = ram_a_val.read(j)
+            strm.set_parameter('a', x)
+            strm.set_source('b', ram_b, 0, b_width)
+            strm.set_source('c', ram_c, 0, b_width, port=0)
+            strm.set_sink('d', ram_c, 0, b_width, port=1)
+            strm.run()
+            strm.join()
+    maxi.dma_write(ram_c, 0, c_addr, b_width)
+    c_addr += b_width * (datawidth // 8)'''
