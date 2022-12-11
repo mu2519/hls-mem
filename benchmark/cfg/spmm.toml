@@ -1,0 +1,63 @@
+regs = [
+  'a_height', 'b_width', 'a_row_offset',
+  'a_col_offset', 'a_val_offset', 'b_offset', 'c_offset',
+]
+
+arrs = [
+  ['a_row', 'a_row_offset'],
+  ['a_col', 'a_col_offset'],
+  ['a_val', 'a_val_offset'],
+  ['b', 'b_offset'],
+  ['c_ref', 'c_ref_offset'],
+]
+
+configs = '''
+rand_range = (-16, 16)
+
+sparsity = 0.1
+
+a_height = 16
+b_height = 16
+b_width = 16
+a_row_offset = 0 * 1024
+a_col_offset = 1 * 1024
+a_val_offset = 2 * 1024
+b_offset = 3 * 1024
+c_offset = 4 * 1024
+c_ref_offset = 5 * 1024'''
+
+imports = '''
+from scipy.sparse import csr_array'''
+
+set_arrs = '''
+a = np.zeros((a_height, b_height), dtype=np.int64)
+for i in range(a_height):
+    for j in range(b_height):
+        u = random.random()
+        if u < sparsity:
+            a[i, j] = random.randint(*rand_range)
+a_csr = csr_array(a)
+a_row = a_csr.indptr.astype(np.int64)
+a_col = a_csr.indices.astype(np.int64)
+a_val = a_csr.data.astype(np.int64)
+a_nnz = a_csr.nnz
+assert a_row.shape == (a_height + 1,)
+assert a_col.shape == (a_nnz,)
+assert a_val.shape == (a_nnz,)
+
+b = np.zeros((b_height, b_width), dtype=np.int64)
+for i in range(b_height):
+    for j in range(b_width):
+        b[i, j] = random.randint(*rand_range)
+
+c_ref = a @ b
+assert c_ref.shape == (a_height, b_width)
+assert c_ref.dtype == np.int64'''
+
+check = '''
+for i in range(a_height):
+    for j in range(b_width):
+        x = memory.read(c_offset + (b_width*i + j)*(datawidth//8))
+        y = memory.read(c_ref_offset + (b_width*i + j)*(datawidth//8))
+        if x != y:
+            flag = False'''

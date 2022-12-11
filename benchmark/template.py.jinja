@@ -6,9 +6,10 @@ from veriloggen import *
 import veriloggen.thread as vthread
 from veriloggen.types import axi
 
+{{ imports }}
+
 
 {{ configs }}
-
 
 datawidth = 32
 
@@ -20,7 +21,7 @@ mem_addrwidth = 20
 
 axilite_datawidth = 32
 axilite_addrwidth = 32
-axireg_length = 8
+axireg_length = {{ regs|length + 3 }}
 
 counter_width = 32
 
@@ -38,7 +39,15 @@ def mkdut() -> Module:
         counter.inc()
     )
 
+    {%- if ram_defs is defined %}
     {{ ram_defs|indent(4) }}
+    {%- endif %}
+
+    {%- if rams is defined %}
+    {%- for ram in rams %}
+    {{ ram[0] }} = vthread.RAM(m, '{{ ram[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ ram[1] }})
+    {%- endfor %}
+    {%- endif %}
 
     {%- if strm_defs is defined %}
     {{ strm_defs|indent(4) }}
@@ -82,6 +91,8 @@ def mkdut() -> Module:
 
 
 def mktb() -> Module:
+    random.seed(0, 2)
+
     {{ set_arrs|indent(4) }}
 
     memimg = np.zeros(2**mem_addrwidth // (mem_datawidth//8), dtype=np.int64)
