@@ -3,6 +3,7 @@ from veriloggen.core.module import Module
 from veriloggen.seq.seq import Seq, make_condition
 from veriloggen.fsm.fsm import FSM
 from .ram import RAM
+from .axim import AXIM
 
 
 def add_cond(tgt: vtypes._Variable, cond):
@@ -15,7 +16,8 @@ def add_cond(tgt: vtypes._Variable, cond):
 
 class PIPO(RAM):
     __intrinsics__ = ('push', 'pop',
-                      'wait_not_empty', 'wait_not_full') + RAM.__intrinsics__
+                      'wait_not_empty', 'wait_not_full',
+                      'dma_read', 'dma_write') + RAM.__intrinsics__
 
     def __init__(
         self,
@@ -123,6 +125,16 @@ class PIPO(RAM):
 
     def wait_not_full(self, fsm: FSM):
         fsm.If(vtypes.Not(self.full)).goto_next()
+
+    def dma_read(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
+                 local_size, local_stride=1, port=0):
+        self.wait_not_full(fsm)
+        axi.dma_read(fsm, self, local_addr, global_addr, local_size, local_stride, port)
+
+    def dma_write(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
+                  local_size, local_stride=1, port=0):
+        self.wait_not_empty(fsm)
+        axi.dma_write(fsm, self, local_addr, global_addr, local_size, local_stride, port)
 
     # invalidate some methods from the parent class `RAM`
     def connect_rtl(self, *args, **kwargs):

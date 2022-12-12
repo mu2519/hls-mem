@@ -18,6 +18,7 @@ from veriloggen.optimizer import try_optimize as optimize
 from .scope import ScopeFrameList
 from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
+from .pipo import PIPO
 from .inchworm import Inchworm
 
 numerical_types = vtypes.numerical_types
@@ -71,7 +72,7 @@ def find_dma(code: ast.AST | Sequence[ast.AST], ram_name: str) -> bool:
             value = node.func.value
             attr = node.func.attr
             if isinstance(value, ast.Name) and value.id == ram_name:
-                if attr in ['dma_read', 'dma_write']:
+                if attr in ['dma_read', 'dma_write', 'push']:
                     return True
         for n in ast.iter_child_nodes(node):
             if find_dma(n, ram_name):
@@ -94,7 +95,7 @@ def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
         node = code
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name) and node.func.value.id == ram_name:
-                if node.func.attr in ['dma_read', 'dma_write']:
+                if node.func.attr in ['dma_read', 'dma_write', 'push']:
                     return get_vars(node.args, 'both') | get_vars([kw.value for kw in node.keywords], 'both')
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), ast.iter_child_nodes(node)), set())
     else:
@@ -407,7 +408,7 @@ class CompileVisitor(ast.NodeVisitor):
         frame_scope.update(self.start_frame.f_locals)
         self.rams: list[str] = []
         for name, value in frame_scope.items():
-            if isinstance(value, Inchworm):
+            if isinstance(value, (PIPO, Inchworm)):
                 self.rams.append(name)
 
     def get_ram_fsm(self, name: str) -> FSM:
