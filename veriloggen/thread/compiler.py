@@ -102,32 +102,6 @@ def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), nodes), set())
 
 
-def filter_dma_related_stmts(stmts: list[ast.stmt], ram_name: str):
-    """
-    extract statements related to DMA accesses tied to the specified RAM object
-    `ram_name`: the identifier of the RAM object
-    """
-    # extract variables related to DMA accesses tied to the specified RAM object
-    # and variables necessary to calculate them (recursively)
-    needed_vars = get_dma_vars(stmts, ram_name)
-    while True:
-        ischanged = False
-        for s in reversed(stmts):
-            if get_vars(s, 'store') & needed_vars:
-                if not get_vars(s, 'load') <= needed_vars:
-                    ischanged = True
-                    needed_vars |= get_vars(s, 'load')
-        if not ischanged:
-            break
-    # extract statements related to DMA accesses tied to the specified RAM object
-    # and statements to calculate data necessary for those DMA accesses
-    filtered_stmts: list[ast.stmt] = []
-    for s in stmts:
-        if find_dma(s, ram_name) or get_vars(s, 'store') & needed_vars:
-            filtered_stmts.append(s)
-    return filtered_stmts
-
-
 def make_var_dep_graph_sub(node: ast.AST, rslt: defaultdict[str, set[str]]) -> None:
     if isinstance(node, (ast.Assign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
