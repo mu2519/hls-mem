@@ -1,0 +1,15 @@
+a, b: input
+c: output (zero initialized)
+
+# naive
+temporal for i in range(m):
+    temporal for j in range(a.row[i], a.row[i + 1]):
+        temporal for k in range(n):
+            c[i, k] += a.val[j] * b[a.col[j], k]
+
+# parallel
+temporal for i in range(m):
+    temporal for j in range(a.row[i], a.row[i + 1]):
+        temporal for k in range(0, n, t):
+            spatial for kk in range(t):
+                c[i, k + kk] += a.val[j] * b[a.col[j], k + kk]

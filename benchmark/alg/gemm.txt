@@ -1,0 +1,43 @@
+a, b: input
+c: output (zero initialized)
+
+
+# naive version
+temporal for i in range(m):
+    temporal for j in range(n):
+        temporal for k in range(p):
+            c[i, j] += a[i, k] * b[k, j]
+
+domain: {S[i, j, k] | 0 <= i < m, 0 <= j < n, 0 <= k < p}
+temporal band: S[i, j, k] -> [i, j, k]
+
+
+# parallel version
+temporal for i in range(0, m, t):
+    temporal for j in range(0, n, t):
+        spatial for ii in range(t):
+            spatial for jj in range(t):
+                temporal for k in range(p):
+                    c[i + ii, j + jj] += a[i + ii, k] * b[k, j + jj]
+
+context: m >= t, n >= t, m % t == 0, n % t == 0
+domain: {S[i, j, k] | 0 <= i < m, 0 <= j < n, 0 <= k < p}
+temporal band: S[i, j, k] -> [i // t, j // t]
+spatial band: S[i, j, k] -> [i % t, j % t]
+temporal band: S[i, j, k] -> [k]
+
+
+# parallel block version
+temporal for i in range(0, m, t):
+    temporal for j in range(0, n, t):
+        spatial for ii in range(t):
+            spatial for jj in range(t):
+                temporal for k in range(0, p, t'):
+                    temporal for kk in range(t'):
+                        c[i + ii, j + jj] += a[i + ii, k + kk] * b[k + kk, j + jj]
+
+context: m >= t, n >= t, m % t == 0, n % t == 0
+domain: {S[i, j, k] | 0 <= i < m, 0 <= j < n, 0 <= k < p}
+temporal band: S[i, j, k] -> [i // t, j // t]
+spatial band: S[i, j, k] -> [i % t, j % t]
+temporal band: S[i, j, k] -> [k]
