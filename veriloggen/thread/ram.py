@@ -92,18 +92,6 @@ class RAM(_MutexFunction):
     def _id(self):
         return id(self)
 
-    @property
-    def length(self):
-        if isinstance(self.addrwidth, int):
-            return 2 ** self.addrwidth
-        return vtypes.Int(2) ** self.addrwidth
-
-    @property
-    def packed_length(self):
-        if isinstance(self.packed_addrwidth, int):
-            return 2 ** self.packed_addrwidth
-        return vtypes.Int(2) ** self.packed_addrwidth
-
     def has_enable(self, port):
         return hasattr(self.interfaces[port], 'enable')
 
@@ -223,7 +211,11 @@ class RAM(_MutexFunction):
         fsm.If(cond, length > 0).goto_next()
 
         renable = vtypes.Ands(fsm.here, vtypes.Ors(vtypes.Not(rvalid), rready))
-        rdata, _ = self.read_rtl(_addr, port, renable)
+        try:
+            read_method = self.read_burst_rtl
+        except AttributeError:
+            read_method = self.read_rtl
+        rdata, _ = read_method(_addr, port, renable)
         rdata_wire = self.m.TmpWireLike(rdata, prefix='read_burst_rdata')
         rdata_wire.assign(rdata)
 
@@ -284,7 +276,11 @@ class RAM(_MutexFunction):
 
         wenable = vtypes.Ands(fsm.here, wvalid)
         wready = fsm.here
-        self.write_rtl(_addr, wdata, port, wenable)
+        try:
+            write_method = self.write_burst_rtl
+        except AttributeError:
+            write_method = self.write_rtl
+        write_method(_addr, wdata, port, wenable)
 
         fsm.If(wvalid)(
             _addr(_addr + _stride),

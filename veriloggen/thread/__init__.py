@@ -9,6 +9,7 @@ from .ttypes import __intrinsics__ as __ttypes_intrinsics__
 from .ttypes import *
 from .ram import *
 from .fifo import *
+from .pipo import PIPO
 from .inchworm import Inchworm
 from .axi import *
 from .util import __intrinsics__ as __util_intrinsics__

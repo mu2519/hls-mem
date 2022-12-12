@@ -49,6 +49,12 @@ def mkdut() -> Module:
     {%- endfor %}
     {% endif %}
 
+    {% if pipos is defined %}
+    {%- for pipo in pipos %}
+    {{ pipo[0] }} = vthread.PIPO(m, '{{ pipo[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ pipo[1] }}, numports={{ pipo[2]|default(1) }})
+    {%- endfor %}
+    {% endif %}
+
     {%- if strm_defs is defined %}
     {{ strm_defs|indent(4) }}
     {%- endif %}

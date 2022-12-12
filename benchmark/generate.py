@@ -21,7 +21,7 @@ loader = FileSystemLoader('.')
 env = Environment(loader=loader)
 template = env.get_template('template.py.jinja')
 
-with open('./cfg/meta.toml', 'rb') as f:
+with open('./meta.toml', 'rb') as f:
     meta = tomllib.load(f)
 
 for k, v in meta.items():
