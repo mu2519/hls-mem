@@ -39,7 +39,26 @@ def union(x: set, y: set) -> set:
     return x | y
 
 
-def filter_map(func: Callable[[T1], T2 | None], iter: Iterable[T1]) -> filter[T2]:
+def fold_map(
+    iter: Iterable[T1],
+    map_func: Callable[[T1], T2],
+    fold_func: Callable[[T2, T2], T2],
+    fold_init: T2,
+) -> T2:
+    return reduce(fold_func, map(map_func, iter), fold_init)
+
+
+def fold_map_set(
+    func: Callable[[T], set],
+    iter: Iterable[T],
+) -> set:
+    return fold_map(iter, func, union, set())
+
+
+def filter_map(
+    func: Callable[[T1], T2 | None],
+    iter: Iterable[T1],
+) -> filter[T2]:
     return filter(lambda x: x is not None, map(func, iter))
 
 
@@ -87,6 +106,17 @@ def find_dma(node: ast.AST, ram_name: str) -> bool:
     return False
 
 
+def get_called_methods(node: ast.AST, inst_name: str) -> set[str]:
+    cur = set()
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        attr = node.func.attr
+        if isinstance(value, ast.Name) and value.id == inst_name:
+            cur.add(attr)
+    return cur | fold_map_set(partial(get_called_methods, inst_name=inst_name),
+                              ast.iter_child_nodes(node))
+
+
 dma_relevant_methods = {
     'dma_read': ['dma_read', 'push'],
     'dma_write': ['dma_write', 'pop'],
@@ -96,18 +126,14 @@ dma_relevant_methods = {
 def find_dma_relevant(
     node: ast.AST,
     ram_name: str,
-    dma_kind: Literal['dma_read', 'dma_write', 'both'] = 'both',
+    dma_kind: Literal['dma_read', 'dma_write'],
 ) -> bool:
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         value = node.func.value
         attr = node.func.attr
         if isinstance(value, ast.Name) and value.id == ram_name:
-            if dma_kind == 'both':
-                if attr in list(chain(*dma_relevant_methods.values())):
-                    return True
-            else:
-                if attr in dma_relevant_methods[dma_kind]:
-                    return True
+            if attr in dma_relevant_methods[dma_kind]:
+                return True
     for n in ast.iter_child_nodes(node):
         if find_dma_relevant(n, ram_name, dma_kind):
             return True
@@ -239,11 +265,20 @@ def filter_stmt(
 
 
 def extract_dma_relevant(node: ast.stmt, ram: str) -> ast.stmt | None:
+    ram_methods = get_called_methods(node, ram)
+    if {'dma_read', 'dma_write'} <= ram_methods:
+        raise RuntimeError
+    elif 'dma_read' in ram_methods:
+        dma_kind = 'dma_read'
+    elif 'dma_write' in ram_methods:
+        dma_kind = 'dma_write'
+    else:
+        return None
     var_dep_graph = make_var_dep_graph(node)
     needed_vars = collect_reachable(var_dep_graph, get_dma_vars(node, ram))
     return filter_stmt(node,
                        (partial(find_var_modif, vars=needed_vars),
-                        partial(find_dma_relevant, ram_name=ram, dma_kind='dma_read')))
+                        partial(find_dma_relevant, ram_name=ram, dma_kind=dma_kind)))
 
 
 def find_side_effect(node: ast.AST) -> bool:
@@ -258,15 +293,30 @@ def get_side_effect_vars(node: ast.AST) -> set[str]:
     return reduce(union, map(get_side_effect_vars, ast.iter_child_nodes(node)), set())
 
 
-def temporary(node: ast.AST, rams: list[str]):
-    for ram in rams:
-        if find_dma_relevant(node, ram, 'dma_read'):
+def temporary(
+    node: ast.AST,
+    info: list[tuple[str, Literal['dma_read', 'dma_write']]]
+) -> bool:
+    for ram_name, dma_kind in info:
+        if find_dma_relevant(node, ram_name, dma_kind):
             return False
     return True
 
 
-def extract_dma_irrelevant(node: ast.stmt, rams: list[str]) -> ast.stmt | None:
-    node = filter_stmt(node, (partial(temporary, rams=rams),))
+def extract_dma_irrelevant(node: ast.stmt, rams: Sequence[str]) -> ast.stmt | None:
+    info = []
+    for ram_name in rams:
+        ram_methods = get_called_methods(node, ram_name)
+        if {'dma_read', 'dma_write'} <= ram_methods:
+            raise RuntimeError
+        elif 'dma_read' in ram_methods:
+            dma_kind = 'dma_read'
+        elif 'dma_write' in ram_methods:
+            dma_kind = 'dma_write'
+        else:
+            continue
+        info.append((ram_name, dma_kind))
+    node = filter_stmt(node, (partial(temporary, info=info),))
     if node is None:
         return None
     var_dep_graph = make_var_dep_graph(node)
