@@ -6,12 +6,13 @@ import os
 from collections import OrderedDict
 
 import veriloggen.core.vtypes as vtypes
+from veriloggen.core.module import Module
 from . import componentgen
 
 TEMPLATE_DIR = os.path.dirname(os.path.abspath(__file__)) + '/template/'
 
 
-def to_ipxact(m, ip_name=None, ip_ver='1.0',
+def to_ipxact(m: Module, ip_name: str | None = None, ip_ver='1.0',
               clk_ports=None, rst_ports=None, irq_ports=None):
 
     if ip_name is None:

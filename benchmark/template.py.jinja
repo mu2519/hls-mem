@@ -5,6 +5,7 @@ import numpy as np
 from veriloggen import *
 import veriloggen.thread as vthread
 from veriloggen.types import axi
+from veriloggen.types.ipxact import to_ipxact
 
 {{ imports }}
 
@@ -29,7 +30,7 @@ simulation_period = 1000000
 
 
 def mkdut() -> Module:
-    m = Module('dut')
+    m = Module('{{ dut_name }}')
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
@@ -90,7 +91,7 @@ def mkdut() -> Module:
     def comp({{ regs|join(', ') }}):
         {{ comp_body|indent(8) }}
 
-    thd = vthread.Thread(m, 'dut_thd', clk, rst, main)
+    thd = vthread.Thread(m, 'thd', clk, rst, main)
     thd.start()
 
     return m
@@ -160,10 +161,10 @@ def mktb() -> Module:
 
         vthread.finish()
 
-    thd = vthread.Thread(m, 'tb_thd', clk, rst, ctrl)
+    thd = vthread.Thread(m, 'thd', clk, rst, ctrl)
     thd.start()
 
-    inst = m.Instance(dut, 'inst',
+    inst = m.Instance(dut, 'dut',
                       params=m.connect_params(dut),
                       ports=m.connect_ports(dut))
 
@@ -185,5 +186,11 @@ def run() -> None:
     print(rslt)
 
 
+def syn() -> None:
+    m = mkdut()
+    to_ipxact(m, clk_ports=[('CLK', ('RST',))], rst_ports=[('RST', 'ACTIVE_HIGH')])
+
+
 if __name__ == '__main__':
     run()
+    syn()

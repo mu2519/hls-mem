@@ -88,14 +88,14 @@ class PIPO(RAM):
         return self._read_rtl(addr, port, cond, self.head)
 
     def read_burst_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
-        return self._read_rtl(addr, port, cond, self.tail)
+        return self._read_rtl(addr, port, cond, self.head)
 
     def _write_rtl(self, addr, data, port, cond, ptr):
         for i in range(self.length):
             self.rams[i].write_rtl(addr, data, port, vtypes.Ands(cond, ptr == i))
 
     def write_rtl(self, addr, data, port=0, cond=None):
-        self._write_rtl(addr, data, port, cond, self.head)
+        self._write_rtl(addr, data, port, cond, self.tail)
 
     def write_burst_rtl(self, addr, data, port=0, cond=None):
         self._write_rtl(addr, data, port, cond, self.tail)
@@ -129,12 +129,16 @@ class PIPO(RAM):
     def dma_read(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
                  local_size, local_stride=1, port=0):
         self.wait_not_full(fsm)
+        axi.lock(fsm)
         axi.dma_read(fsm, self, local_addr, global_addr, local_size, local_stride, port)
+        axi.unlock(fsm)
 
     def dma_write(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
                   local_size, local_stride=1, port=0):
         self.wait_not_empty(fsm)
+        axi.lock(fsm)
         axi.dma_write(fsm, self, local_addr, global_addr, local_size, local_stride, port)
+        axi.unlock(fsm)
 
     # invalidate some methods from the parent class `RAM`
     def connect_rtl(self, *args, **kwargs):

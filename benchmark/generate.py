@@ -34,6 +34,8 @@ for k, v in meta.items():
             raise TypeError
         with open('./cfg/' + n + '.toml', 'rb') as f:
             custom_merge(cfg, tomllib.load(f))
+    if 'dut_name' not in cfg:
+        cfg['dut_name'] = k
     src = template.render(cfg)
     if len(sys.argv) > 1:
         src = black.format_str(src, mode=black.Mode())
