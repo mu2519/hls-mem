@@ -5,7 +5,6 @@ import copy
 import ast
 import inspect
 import textwrap
-from itertools import chain
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence, Callable, Iterable
 from typing import Any, Literal, TypeVar
