@@ -5,9 +5,10 @@ import copy
 import ast
 import inspect
 import textwrap
+from itertools import chain
 from collections import OrderedDict, defaultdict
-from collections.abc import Sequence
-from typing import Literal, Any, Callable
+from collections.abc import Sequence, Callable, Iterable
+from typing import Any, Literal, TypeVar
 from types import FunctionType, MethodType, FrameType
 
 from veriloggen.fsm.fsm import FSM
@@ -29,11 +30,23 @@ _tmp_count = 0
 # compiler.py: Python AST -> FSM
 
 
+T = TypeVar('T')
+T1 = TypeVar('T1')
+T2 = TypeVar('T2')
+
+
 def union(x: set, y: set) -> set:
     return x | y
 
 
-def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'both'] = 'both') -> set[str]:
+def filter_map(func: Callable[[T1], T2 | None], iter: Iterable[T1]) -> filter[T2]:
+    return filter(lambda x: x is not None, map(func, iter))
+
+
+def get_vars(
+    code: ast.AST | Sequence[ast.AST],
+    ctx: Literal['load', 'store', 'both'] = 'both',
+) -> set[str]:
     """
     extract variables which have the specified context
     `ctx`: the context of variables
@@ -61,31 +74,64 @@ def get_vars(code: ast.AST | Sequence[ast.AST], ctx: Literal['load', 'store', 'b
             raise TypeError
 
 
-def find_dma(code: ast.AST | Sequence[ast.AST], ram_name: str) -> bool:
-    """
-    judge whether DMA accesses tied to the specified RAM object exist
-    `ram_name`: the identifier of the RAM object
-    """
-    if isinstance(code, ast.AST):
-        node = code
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            value = node.func.value
-            attr = node.func.attr
-            if isinstance(value, ast.Name) and value.id == ram_name:
-                if attr in ['dma_read', 'dma_write', 'push']:
-                    return True
-        for n in ast.iter_child_nodes(node):
-            if find_dma(n, ram_name):
+def find_dma(node: ast.AST, ram_name: str) -> bool:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        attr = node.func.attr
+        if isinstance(value, ast.Name) and value.id == ram_name:
+            if attr in ['dma_read', 'dma_write']:
                 return True
-    else:
-        nodes = code
-        for n in nodes:
-            if find_dma(n, ram_name):
-                return True
+    for n in ast.iter_child_nodes(node):
+        if find_dma(n, ram_name):
+            return True
     return False
 
 
-def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
+dma_relevant_methods = {
+    'dma_read': ['dma_read', 'push'],
+    'dma_write': ['dma_write', 'pop'],
+}
+
+
+def find_dma_relevant(
+    node: ast.AST,
+    ram_name: str,
+    dma_kind: Literal['dma_read', 'dma_write', 'both'] = 'both',
+) -> bool:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        attr = node.func.attr
+        if isinstance(value, ast.Name) and value.id == ram_name:
+            if dma_kind == 'both':
+                if attr in list(chain(*dma_relevant_methods.values())):
+                    return True
+            else:
+                if attr in dma_relevant_methods[dma_kind]:
+                    return True
+    for n in ast.iter_child_nodes(node):
+        if find_dma_relevant(n, ram_name, dma_kind):
+            return True
+    return False
+
+
+def find_var_modif(
+    node: ast.Assign | ast.AugAssign | ast.Expr,
+    vars: set[str],
+) -> bool:
+    if isinstance(node, ast.Assign):
+        return bool(get_vars(node.targets) & vars)
+    elif isinstance(node, ast.AugAssign):
+        return bool(get_vars(node.target) & vars)
+    elif isinstance(node, ast.Expr):
+        return False
+    else:
+        raise TypeError(f'unexpected node type {type(node)}')
+
+
+def get_dma_vars(
+    code: ast.AST | Sequence[ast.AST],
+    ram_name: str,
+) -> set[str]:
     """
     extract variables which occur in the arguments of function calls
     for DMA accesses tied to the specified RAM object
@@ -95,7 +141,7 @@ def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
         node = code
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name) and node.func.value.id == ram_name:
-                if node.func.attr in ['dma_read', 'dma_write', 'push']:
+                if node.func.attr in ['dma_read', 'dma_write']:
                     return get_vars(node.args, 'both') | get_vars([kw.value for kw in node.keywords], 'both')
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), ast.iter_child_nodes(node)), set())
     else:
@@ -103,7 +149,10 @@ def get_dma_vars(code: ast.AST | Sequence[ast.AST], ram_name: str) -> set[str]:
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), nodes), set())
 
 
-def make_var_dep_graph_sub(node: ast.AST, rslt: defaultdict[str, set[str]]) -> None:
+def make_var_dep_graph_sub(
+    node: ast.AST,
+    rslt: defaultdict[str, set[str]],
+) -> None:
     if isinstance(node, (ast.Assign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
             dst_vars = get_vars(node.targets)
@@ -124,7 +173,7 @@ def make_var_dep_graph(node: ast.AST) -> defaultdict[str, set[str]]:
     return rslt
 
 
-def collect_reachable_sub(graph: dict[Any, set], node: Any, visited: set) -> None:
+def collect_reachable_sub(graph: dict[T, set[T]], node: T, visited: set[T]) -> None:
     if node in visited:
         return
     visited.add(node)
@@ -132,43 +181,37 @@ def collect_reachable_sub(graph: dict[Any, set], node: Any, visited: set) -> Non
         collect_reachable_sub(graph, n, visited)
 
 
-def collect_reachable(graph: dict[Any, set], start_nodes: set) -> set:
+def collect_reachable(
+    graph: dict[T, set[T]],
+    start_nodes: set[T],
+) -> set[T]:
     """ collect reachable nodes given a graph and a set of start nodes """
-    visited = set()
+    visited: set[T] = set()
     for s in start_nodes:
         collect_reachable_sub(graph, s, visited)
     return visited
 
 
-def extract_dma_relevant_sub(node: ast.stmt, ram: str, needed_vars: set[str]) -> ast.stmt | None:
+def filter_stmt(
+    node: ast.stmt,
+    criteria: Sequence[Callable[[ast.Assign | ast.AugAssign | ast.Expr], bool]]
+) -> ast.stmt | None:
     if isinstance(node, ast.For) and node.orelse:
         raise ValueError('for-else statement is not supported')
     if isinstance(node, ast.While) and node.orelse:
         raise ValueError('while-else statement is not supported')
 
     if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
-        body = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.body)
-        body = filter(lambda x: x is not None, body)
-        body = list(body)
+        body = list(filter_map(partial(filter_stmt, criteria=criteria), node.body))
         if body:
             node = copy.deepcopy(node)
             node.body = body
             return node
         else:
             return None
-    elif isinstance(node, ast.Assign):
-        if get_vars(node.targets) & needed_vars:
-            return node
-    elif isinstance(node, ast.AugAssign):
-        if get_vars(node.target) & needed_vars:
-            return node
     elif isinstance(node, ast.If):
-        body = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.body)
-        orelse = map(partial(extract_dma_relevant_sub, ram=ram, needed_vars=needed_vars), node.orelse)
-        body = filter(lambda x: x is not None, body)
-        orelse = filter(lambda x: x is not None, orelse)
-        body = list(body)
-        orelse = list(orelse)
+        body = list(filter_map(partial(filter_stmt, criteria=criteria), node.body))
+        orelse = list(filter_map(partial(filter_stmt, criteria=criteria), node.orelse))
         if body:
             node = copy.deepcopy(node)
             node.body = body
@@ -182,21 +225,25 @@ def extract_dma_relevant_sub(node: ast.stmt, ram: str, needed_vars: set[str]) ->
             return node
         else:
             return None
-    elif isinstance(node, ast.Pass):
-        return None
     elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
         return node
-
-    if find_dma(node, ram):
-        return node
-    else:
+    elif isinstance(node, ast.Pass):
         return None
+    elif isinstance(node, (ast.Assign, ast.AugAssign, ast.Expr)):
+        for criterion in criteria:
+            if criterion(node):
+                return node
+        return None
+    else:
+        raise TypeError(f'unexpected node type {type(node)}')
 
 
 def extract_dma_relevant(node: ast.stmt, ram: str) -> ast.stmt | None:
     var_dep_graph = make_var_dep_graph(node)
     needed_vars = collect_reachable(var_dep_graph, get_dma_vars(node, ram))
-    return extract_dma_relevant_sub(node, ram, needed_vars)
+    return filter_stmt(node,
+                       (partial(find_var_modif, vars=needed_vars),
+                        partial(find_dma_relevant, ram_name=ram, dma_kind='dma_read')))
 
 
 def find_side_effect(node: ast.AST) -> bool:
@@ -211,113 +258,22 @@ def get_side_effect_vars(node: ast.AST) -> set[str]:
     return reduce(union, map(get_side_effect_vars, ast.iter_child_nodes(node)), set())
 
 
-def extract_dma_irrelevant_sub(node: ast.stmt, needed_vars: set[str]) -> ast.stmt | None:
-    if isinstance(node, ast.For) and node.orelse:
-        raise ValueError('for-else statement is not supported')
-    if isinstance(node, ast.While) and node.orelse:
-        raise ValueError('while-else statement is not supported')
-
-    if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
-        body = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.body)
-        body = filter(lambda x: x is not None, body)
-        body = list(body)
-        if body:
-            node = copy.deepcopy(node)
-            node.body = body
-            return node
-        else:
-            return None
-    elif isinstance(node, ast.Assign):
-        if get_vars(node.targets) & needed_vars:
-            return node
-    elif isinstance(node, ast.AugAssign):
-        if get_vars(node.target) & needed_vars:
-            return node
-    elif isinstance(node, ast.If):
-        body = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.body)
-        orelse = map(partial(extract_dma_irrelevant_sub, needed_vars=needed_vars), node.orelse)
-        body = filter(lambda x: x is not None, body)
-        orelse = filter(lambda x: x is not None, orelse)
-        body = list(body)
-        orelse = list(orelse)
-        if body:
-            node = copy.deepcopy(node)
-            node.body = body
-            node.orelse = orelse
-            return node
-        elif orelse:
-            node = copy.deepcopy(node)
-            node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
-            node.body = orelse
-            node.orelse = []
-            return node
-        else:
-            return None
-    elif isinstance(node, ast.Pass):
-        return None
-    elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
-        return node
-
-    if find_side_effect(node):
-        return node
-    else:
-        return None
-
-
-def eliminate_dma_calls(node: ast.stmt, rams: list[str]) -> ast.stmt | None:
-    if isinstance(node, ast.For) and node.orelse:
-        raise ValueError('for-else statement is not supported')
-    if isinstance(node, ast.While) and node.orelse:
-        raise ValueError('while-else statement is not supported')
-
-    if isinstance(node, (ast.FunctionDef, ast.For, ast.While)):
-        body = map(partial(eliminate_dma_calls, rams=rams), node.body)
-        body = filter(lambda x: x is not None, body)
-        body = list(body)
-        if body:
-            node = copy.deepcopy(node)
-            node.body = body
-            return node
-        else:
-            return None
-    elif isinstance(node, ast.If):
-        body = map(partial(eliminate_dma_calls, rams=rams), node.body)
-        orelse = map(partial(eliminate_dma_calls, rams=rams), node.orelse)
-        body = filter(lambda x: x is not None, body)
-        orelse = filter(lambda x: x is not None, orelse)
-        body = list(body)
-        orelse = list(orelse)
-        if body:
-            node = copy.deepcopy(node)
-            node.body = body
-            node.orelse = orelse
-            return node
-        elif orelse:
-            node = copy.deepcopy(node)
-            node.test = ast.UnaryOp(op=ast.Not(), operand=node.test)
-            node.body = orelse
-            node.orelse = []
-            return node
-        else:
-            return None
-    elif isinstance(node, ast.Pass):
-        return None
-    elif isinstance(node, (ast.Return, ast.Break, ast.Continue)):
-        return node
-
-    for r in rams:
-        if find_dma(node, r):
-            return None
-    return node
+def temporary(node: ast.AST, rams: list[str]):
+    for ram in rams:
+        if find_dma_relevant(node, ram, 'dma_read'):
+            return False
+    return True
 
 
 def extract_dma_irrelevant(node: ast.stmt, rams: list[str]) -> ast.stmt | None:
-    node = eliminate_dma_calls(node, rams)
+    node = filter_stmt(node, (partial(temporary, rams=rams),))
     if node is None:
         return None
     var_dep_graph = make_var_dep_graph(node)
     needed_vars = collect_reachable(var_dep_graph, get_side_effect_vars(node))
-    return extract_dma_irrelevant_sub(node, needed_vars)
+    return filter_stmt(node,
+                       (partial(find_var_modif, vars=needed_vars),
+                        find_side_effect))
 
 
 def _tmp_name(prefix='_tmp_thread'):
@@ -1040,7 +996,7 @@ class CompileVisitor(ast.NodeVisitor):
 
     def _visit_next_function(self, node: ast.FunctionDef):
         for ram in self.rams:
-            if extract_dma_relevant(node, ram) is not None:
+            if find_dma(node, ram):
                 self.fork_join(node, self.generic_visit)
                 return vtypes.Int(0)
 
