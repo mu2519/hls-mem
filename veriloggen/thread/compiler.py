@@ -18,6 +18,7 @@ from veriloggen.optimizer import try_optimize as optimize
 from .scope import ScopeFrameList
 from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
+from .ram import RAM
 from .pipo import PIPO
 from .inchworm import Inchworm
 
@@ -174,9 +175,16 @@ def get_dma_vars(
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), nodes), set())
 
 
-def make_var_dep_graph_sub(
+def get_func_calls(node: ast.AST) -> set[ast.Call]:
+    cur = set()
+    if isinstance(node, ast.Call):
+        cur.add(copy.deepcopy(node))
+    return cur | fold_map_set(get_func_calls, ast.iter_child_nodes(node))
+
+
+def make_dep_graph_sub(
     node: ast.AST,
-    rslt: defaultdict[str, set[str]],
+    rslt: defaultdict[str, set[str | ast.Call]],
 ) -> None:
     if isinstance(node, (ast.Assign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
@@ -184,17 +192,18 @@ def make_var_dep_graph_sub(
         else:
             dst_vars = get_vars(node.target)
         src_vars = get_vars(node.value)
+        src_calls = get_func_calls(node)
         for v in dst_vars:
-            rslt[v] |= src_vars
+            rslt[v] |= src_vars | src_calls
     else:
         for n in ast.iter_child_nodes(node):
-            make_var_dep_graph_sub(n, rslt)
+            make_dep_graph_sub(n, rslt)
 
 
-def make_var_dep_graph(node: ast.AST) -> defaultdict[str, set[str]]:
-    """ construct a variable dependency graph from an AST """
-    rslt: defaultdict[str, set[str]] = defaultdict(set)
-    make_var_dep_graph_sub(node, rslt)
+def make_dep_graph(node: ast.AST) -> dict[str, set[str | ast.Call]]:
+    """ construct a dependency graph from an AST """
+    rslt = defaultdict(set)
+    make_dep_graph_sub(node, rslt)
     return rslt
 
 
@@ -202,6 +211,8 @@ def collect_reachable_sub(graph: dict[T, set[T]], node: T, visited: set[T]) -> N
     if node in visited:
         return
     visited.add(node)
+    if node not in graph:
+        return
     for n in graph[node]:
         collect_reachable_sub(graph, n, visited)
 
@@ -263,7 +274,15 @@ def filter_stmt(
         raise TypeError(f'unexpected node type {type(node)}')
 
 
-def extract_dma_relevant(node: ast.stmt, ram: str) -> ast.stmt | None:
+class DecouplingFailed(Exception):
+    pass
+
+
+def extract_dma_relevant(
+    node: ast.stmt,
+    ram: str,
+    scope: dict[str, Any],
+) -> ast.stmt | None:
     ram_methods = get_called_methods(node, ram)
     if {'dma_read', 'dma_write'} <= ram_methods:
         raise RuntimeError
@@ -273,8 +292,23 @@ def extract_dma_relevant(node: ast.stmt, ram: str) -> ast.stmt | None:
         dma_kind = 'dma_write'
     else:
         return None
-    var_dep_graph = make_var_dep_graph(node)
-    needed_vars = collect_reachable(var_dep_graph, get_dma_vars(node, ram))
+    graph = make_dep_graph(node)
+    reachable = collect_reachable(graph, get_dma_vars(node, ram))
+    needed_vars: set[str] = set()
+    for r in reachable:
+        if isinstance(r, str):
+            needed_vars.add(r)
+        else:
+            if isinstance(r.func, ast.Attribute) and isinstance(r.func.value, ast.Name):
+                inst_name = r.func.value.id
+                method_name = r.func.attr
+                if inst_name in scope:
+                    if isinstance(scope[inst_name], RAM):
+                        if method_name == 'read':
+                            called_methods = get_called_methods(node, inst_name)
+                            if called_methods.isdisjoint({'write', 'dma_read'}):
+                                continue
+            raise DecouplingFailed
     return filter_stmt(node,
                        (partial(find_var_modif, vars=needed_vars),
                         partial(find_dma_relevant, ram_name=ram, dma_kind=dma_kind)))
@@ -318,8 +352,9 @@ def extract_dma_irrelevant(node: ast.stmt, rams: Sequence[str]) -> ast.stmt | No
     node = filter_stmt(node, (partial(temporary, info=info),))
     if node is None:
         return None
-    var_dep_graph = make_var_dep_graph(node)
-    needed_vars = collect_reachable(var_dep_graph, get_side_effect_vars(node))
+    graph = make_dep_graph(node)
+    reachable = collect_reachable(graph, get_side_effect_vars(node))
+    needed_vars: set[str] = set(filter(lambda x: isinstance(x, str), reachable))
     return filter_stmt(node,
                        (partial(find_var_modif, vars=needed_vars),
                         find_side_effect))
@@ -408,13 +443,16 @@ class CompileVisitor(ast.NodeVisitor):
 
         self.scope = self.main_scope
 
-        frame_scope: dict[str, Any] = dict()
-        frame_scope.update(self.start_frame.f_globals)
-        frame_scope.update(self.start_frame.f_locals)
+        self.frame_scope: dict[str, Any] = dict()
+        self.frame_scope.update(self.start_frame.f_globals)
+        self.frame_scope.update(self.start_frame.f_locals)
+
         self.rams: list[str] = []
-        for name, value in frame_scope.items():
+        for name, value in self.frame_scope.items():
             if isinstance(value, (PIPO, Inchworm)):
                 self.rams.append(name)
+
+        self.already_forked = False
 
     def get_ram_fsm(self, name: str) -> FSM:
         if name in self.ram_fsms:
@@ -428,13 +466,22 @@ class CompileVisitor(ast.NodeVisitor):
         return fsm
 
     def fork_join(self, node: ast.AST, visit: Callable[[ast.AST], None]) -> None:
+        # TODO: improve implementation (currently inefficient)
+        try:
+            for ram in self.rams:
+                extract_dma_relevant(node, ram, self.frame_scope)
+        except DecouplingFailed:
+            raise
+
         print(ast.unparse(node))
         print()
+
+        self.already_forked = True
 
         # fork
         states: list[vtypes.Reg] = []
         for ram in self.rams:
-            dma_relevant_code = extract_dma_relevant(node, ram)
+            dma_relevant_code = extract_dma_relevant(node, ram, self.frame_scope)
             if dma_relevant_code is None:
                 continue
 
@@ -470,6 +517,8 @@ class CompileVisitor(ast.NodeVisitor):
         if states:
             # 0 represents idle
             self.main_fsm.goto_next(vtypes.Ands(*[s == 0 for s in states]))
+
+        self.already_forked = False
 
     # -------------------------------------------------------------------------
     def visit(self, node):
@@ -675,6 +724,15 @@ class CompileVisitor(ast.NodeVisitor):
 
         if node.orelse:
             raise NotImplementedError('for-else statement is not supported.')
+
+        if not self.already_forked:
+            for ram in self.rams:
+                if find_dma(node, ram):
+                    try:
+                        self.fork_join(node, self.visit_For)
+                        return
+                    except DecouplingFailed:
+                        break
 
         if (isinstance(node.iter, ast.Call) and
             isinstance(node.iter.func, ast.Name) and
@@ -1044,10 +1102,14 @@ class CompileVisitor(ast.NodeVisitor):
         return ret
 
     def _visit_next_function(self, node: ast.FunctionDef):
-        for ram in self.rams:
-            if find_dma(node, ram):
-                self.fork_join(node, self.generic_visit)
-                return vtypes.Int(0)
+        if not self.already_forked:
+            for ram in self.rams:
+                if find_dma(node, ram):
+                    try:
+                        self.fork_join(node, self.generic_visit)
+                        return vtypes.Int(0)
+                    except DecouplingFailed:
+                        break
 
         self.generic_visit(node)
         retvar = self.getReturnVariable()

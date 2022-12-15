@@ -1,0 +1,12 @@
+# [ name, addrwidth, numports ]
+rams = [
+  ['ram_a_row', 5],
+]
+
+# [ name, addrwidth, numports ]
+pipos = [
+  [ 'ram_a_col', 5 ],
+  [ 'ram_a_val', 5 ],
+  [ 'ram_b', 5 ],
+  [ 'ram_c', 5, 2 ],
+]

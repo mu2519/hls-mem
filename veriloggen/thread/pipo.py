@@ -105,12 +105,14 @@ class PIPO(RAM):
             self.tail.inc()
         )
         add_cond(self.inc_occ, fsm.here)
+        fsm.goto_next()
 
     def pop(self, fsm: FSM):
         self.seq.If(fsm.here)(
             self.head.inc()
         )
         add_cond(self.dec_occ, fsm.here)
+        fsm.goto_next()
 
     @property
     def empty(self):

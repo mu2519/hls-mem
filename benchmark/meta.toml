@@ -7,3 +7,4 @@ gemm_stream_pipo = [ 'gemm', 'gemm_pipo', 'gemm_stream_pipo' ]
 # SpMM
 spmm_thread_ram = [ 'spmm', 'spmm_ram', 'spmm_thread_ram' ]
 spmm_stream_ram = [ 'spmm', 'spmm_ram', 'spmm_stream_ram' ]
+spmm_thread_pipo = [ 'spmm', 'spmm_pipo', 'spmm_thread_pipo' ]

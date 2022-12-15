@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import math
 import collections
 
@@ -12,9 +16,12 @@ from veriloggen.types.ram import RAMInterface, mkRAMDefinition
 
 from .ttypes import _MutexFunction
 
+if TYPE_CHECKING:
+    from .axim import AXIM
+
 
 class RAM(_MutexFunction):
-    __intrinsics__ = ('read', 'write') + _MutexFunction.__intrinsics__
+    __intrinsics__ = ('read', 'write', 'dma_read', 'dma_write') + _MutexFunction.__intrinsics__
 
     def __init__(
         self,
@@ -316,6 +323,18 @@ class RAM(_MutexFunction):
 
         return self.write_burst(bank_addr, bank_stride, bank_length, blocksize,
                                 wdata, wvalid, wlast, wquit, port, cond)
+
+    def dma_read(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
+                 local_size, local_stride=1, port=0):
+        axi.lock(fsm)
+        axi.dma_read(fsm, self, local_addr, global_addr, local_size, local_stride, port)
+        axi.unlock(fsm)
+
+    def dma_write(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
+                  local_size, local_stride=1, port=0):
+        axi.lock(fsm)
+        axi.dma_write(fsm, self, local_addr, global_addr, local_size, local_stride, port)
+        axi.unlock(fsm)
 
 
 class FixedRAM(RAM):
