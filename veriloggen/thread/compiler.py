@@ -452,7 +452,11 @@ class CompileVisitor(ast.NodeVisitor):
             if isinstance(value, (PIPO, Inchworm)):
                 self.rams.append(name)
 
-        self.already_forked = False
+        self.ram_forked: dict[str, bool] = dict()
+        for ram in self.rams:
+            self.ram_forked[ram] = False
+
+        self.is_in_forked_thread = False
 
     def get_ram_fsm(self, name: str) -> FSM:
         if name in self.ram_fsms:
@@ -466,22 +470,19 @@ class CompileVisitor(ast.NodeVisitor):
         return fsm
 
     def fork_join(self, node: ast.AST, visit: Callable[[ast.AST], None]) -> None:
-        # TODO: improve implementation (currently inefficient)
-        try:
-            for ram in self.rams:
-                extract_dma_relevant(node, ram, self.frame_scope)
-        except DecouplingFailed:
-            raise
-
         print(ast.unparse(node))
         print()
 
-        self.already_forked = True
-
         # fork
         states: list[vtypes.Reg] = []
+        forked_rams: list[str] = []
         for ram in self.rams:
-            dma_relevant_code = extract_dma_relevant(node, ram, self.frame_scope)
+            if self.ram_forked[ram]:
+                continue
+            try:
+                dma_relevant_code = extract_dma_relevant(node, ram, self.frame_scope)
+            except DecouplingFailed:
+                continue
             if dma_relevant_code is None:
                 continue
 
@@ -491,15 +492,28 @@ class CompileVisitor(ast.NodeVisitor):
             ram_scope = copy.deepcopy(self.main_scope)
             ram_fsm = self.get_ram_fsm(ram)
 
+            stored_vars = get_vars(dma_relevant_code, 'store')
+            for v in stored_vars:
+                src_v = ram_scope.searchVariable(v)
+                if src_v is not None:
+                    dst_v = self.makeVariableReg(v)
+                    self.main_fsm(
+                        dst_v(src_v)
+                    )
+                    ram_scope.addVariable(v, dst_v)
+
             states.append(ram_fsm.state)
 
             # 0 represents idle
             ram_fsm.goto_from(0, ram_fsm.current, self.main_fsm.here)
+
             self.main_fsm.goto_next()
 
             self.scope = ram_scope
             self.fsm = ram_fsm
+            self.is_in_forked_thread = True
             visit(dma_relevant_code)
+            self.is_in_forked_thread = False
             self.scope = self.main_scope
             self.fsm = self.main_fsm
 
@@ -507,18 +521,22 @@ class CompileVisitor(ast.NodeVisitor):
             ram_fsm.goto_from(ram_fsm.current, 0)
             ram_fsm.inc()
 
-        dma_irrelevant_code = extract_dma_irrelevant(node, self.rams)
+            forked_rams.append(ram)
+
+        dma_irrelevant_code = extract_dma_irrelevant(node, forked_rams)
         if dma_irrelevant_code is not None:
             print(ast.unparse(dma_irrelevant_code))
             print()
+            for ram in forked_rams:
+                self.ram_forked[ram] = True
             visit(dma_irrelevant_code)
+            for ram in forked_rams:
+                self.ram_forked[ram] = False
 
         # join
         if states:
             # 0 represents idle
             self.main_fsm.goto_next(vtypes.Ands(*[s == 0 for s in states]))
-
-        self.already_forked = False
 
     # -------------------------------------------------------------------------
     def visit(self, node):
@@ -715,6 +733,17 @@ class CompileVisitor(ast.NodeVisitor):
         self.clearBreak()
         self.clearContinue()
 
+    def _visit_For(self, node: ast.For):
+        if (isinstance(node.iter, ast.Call) and
+            isinstance(node.iter.func, ast.Name) and
+                node.iter.func.id == 'range'):
+            return self._for_range(node)
+
+        if isinstance(node.iter, (ast.Name, ast.Tuple, ast.List)):
+            return self._for_list(node)
+
+        raise TypeError('unsupported for-statement style')
+
     def visit_For(self, node: ast.For):
         if self.skip():
             return
@@ -725,24 +754,13 @@ class CompileVisitor(ast.NodeVisitor):
         if node.orelse:
             raise NotImplementedError('for-else statement is not supported.')
 
-        if not self.already_forked:
+        if not self.is_in_forked_thread:
             for ram in self.rams:
-                if find_dma(node, ram):
-                    try:
-                        self.fork_join(node, self.visit_For)
-                        return
-                    except DecouplingFailed:
-                        break
+                if not self.ram_forked[ram] and find_dma(node, ram):
+                    self.fork_join(node, self._visit_For)
+                    return
 
-        if (isinstance(node.iter, ast.Call) and
-            isinstance(node.iter.func, ast.Name) and
-                node.iter.func.id == 'range'):
-            return self._for_range(node)
-
-        if isinstance(node.iter, (ast.Name, ast.Tuple, ast.List)):
-            return self._for_list(node)
-
-        raise TypeError('unsupported for-statement style')
+        self._visit_For(node)
 
     def _for_range(self, node: ast.For):
         if len(node.iter.args) == 0:
@@ -1102,14 +1120,11 @@ class CompileVisitor(ast.NodeVisitor):
         return ret
 
     def _visit_next_function(self, node: ast.FunctionDef):
-        if not self.already_forked:
+        if not self.is_in_forked_thread:
             for ram in self.rams:
-                if find_dma(node, ram):
-                    try:
-                        self.fork_join(node, self.generic_visit)
-                        return vtypes.Int(0)
-                    except DecouplingFailed:
-                        break
+                if not self.ram_forked[ram] and find_dma(node, ram):
+                    self.fork_join(node, self.generic_visit)
+                    return vtypes.Int(0)
 
         self.generic_visit(node)
         retvar = self.getReturnVariable()
