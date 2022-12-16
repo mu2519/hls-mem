@@ -27,13 +27,25 @@ numerical_types = vtypes.numerical_types
 _tmp_count = 0
 
 
-# compiler.py: Python AST -> FSM
+class HashableASTCall(ast.Call):
+    def __init__(self, source: ast.Call):
+        self.func = source.func
+        self.args = source.args
+        self.keywords = source.keywords
+
+    def __hash__(self):
+        return hash(ast.dump(self))
 
 
+# type variables used below for type hints
+# they realize parametric polymorphism
 T = TypeVar('T')
 T1 = TypeVar('T1')
 T2 = TypeVar('T2')
 
+
+# utilities for functional programming
+# some of them are adopted from the List module in OCaml
 
 def union(x: set, y: set) -> set:
     return x | y
@@ -175,16 +187,16 @@ def get_dma_vars(
         return reduce(union, map(partial(get_dma_vars, ram_name=ram_name), nodes), set())
 
 
-def get_func_calls(node: ast.AST) -> set[ast.Call]:
+def get_func_calls(node: ast.AST) -> set[HashableASTCall]:
     cur = set()
     if isinstance(node, ast.Call):
-        cur.add(copy.deepcopy(node))
+        cur.add(HashableASTCall(node))
     return cur | fold_map_set(get_func_calls, ast.iter_child_nodes(node))
 
 
 def make_dep_graph_sub(
     node: ast.AST,
-    rslt: defaultdict[str, set[str | ast.Call]],
+    rslt: defaultdict[str, set[str | HashableASTCall]],
 ) -> None:
     if isinstance(node, (ast.Assign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
@@ -200,10 +212,11 @@ def make_dep_graph_sub(
             make_dep_graph_sub(n, rslt)
 
 
-def make_dep_graph(node: ast.AST) -> dict[str, set[str | ast.Call]]:
+def make_dep_graph(node: ast.AST) -> dict[str, set[str | HashableASTCall]]:
     """ construct a dependency graph from an AST """
     rslt = defaultdict(set)
     make_dep_graph_sub(node, rslt)
+    rslt = dict(rslt)
     return rslt
 
 
