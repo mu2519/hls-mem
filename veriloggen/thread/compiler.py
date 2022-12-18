@@ -21,6 +21,7 @@ from .fixed import FixedConst
 from .ram import RAM
 from .pipo import PIPO
 from .inchworm import Inchworm
+from .stream import Stream
 
 numerical_types = vtypes.numerical_types
 
@@ -373,26 +374,78 @@ def extract_dma_irrelevant(node: ast.stmt, rams: Sequence[str]) -> ast.stmt | No
                         find_side_effect))
 
 
+# stream (name) -> ram (name) -> associated operations
+StrmInfoType: TypeAlias = dict[str, dict[str, set[Literal['read', 'write']]]]
+
+
+def get_strm_info_sub(
+    node: ast.AST,
+    rams: list[str],
+    strms: list[str],
+    rslt: StrmInfoType,
+) -> None:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        attr = node.func.attr
+        if isinstance(value, ast.Name) and value.id in strms:
+            strm = value.id
+            ram = None
+            for arg in node.args:
+                if isinstance(arg, ast.Name) and arg.id in rams:
+                    ram = arg.id
+                    break
+            if ram is not None:
+                op = None
+                if attr.startswith('set_source'):
+                    op = 'read'
+                elif attr.startswith('set_sink'):
+                    op = 'write'
+                if op is not None:
+                    if strm not in rslt:
+                        rslt[strm] = dict()
+                    if ram not in rslt[strm]:
+                        rslt[strm][ram] = set()
+                    rslt[strm][ram].add(op)
+    for n in ast.iter_child_nodes(node):
+        get_strm_info_sub(n, rams, strms, rslt)
+
+
+def get_strm_info(
+    node: ast.FunctionDef,
+    rams: list[str],
+    strms: list[str],
+) -> StrmInfoType:
+    rslt: StrmInfoType = dict()
+    get_strm_info_sub(node, rams, strms, rslt)
+    return rslt
+
+
+# ram (name) -> associated operations
 RamInfoType: TypeAlias = dict[str, set[Literal['read', 'write', 'dma_read', 'dma_write']]]
 
 
-def append_ram_info(node: ast.AST, rams: list[str]) -> None:
+def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> None:
     """ change a given node in place! """
     node.ram_info: RamInfoType = dict()
     if (isinstance(node, ast.Call) and
         isinstance(node.func, ast.Attribute) and
-        isinstance(node.func.value, ast.Name) and
-        node.func.value.id in rams and
-        node.func.attr in ['read', 'write', 'dma_read', 'dma_write']):
-        node.ram_info[node.func.value.id] = {node.func.attr}
+        isinstance(node.func.value, ast.Name)):
+        value = node.func.value
+        attr = node.func.attr
+        if value.id in rams and attr in ['read', 'write', 'dma_read', 'dma_write']:
+            node.ram_info[value.id] = {attr}
+        if value.id in strm_info and attr in ['run', 'join']:
+            strm = value.id
+            for ram in strm_info[strm]:
+                node.ram_info[ram] = strm_info[strm][ram].copy()
     for n in ast.iter_child_nodes(node):
-        append_ram_info(n, rams)
-        for r in rams:
-            if r in n.ram_info:
-                if r in node.ram_info:
-                    node.ram_info[r] |= n.ram_info[r]
+        append_ram_info(n, rams, strm_info)
+        for ram in rams:
+            if ram in n.ram_info:
+                if ram in node.ram_info:
+                    node.ram_info[ram] |= n.ram_info[ram]
                 else:
-                    node.ram_info[r] = n.ram_info[r].copy()
+                    node.ram_info[ram] = n.ram_info[ram].copy()
 
 
 def make_call_ast(inst: str, mthd: str) -> ast.Expr:
@@ -652,9 +705,12 @@ class CompileVisitor(ast.NodeVisitor):
         self.frame_scope.update(self.start_frame.f_locals)
 
         self.rams: list[str] = []
+        self.strms: list[str] = []
         for name, value in self.frame_scope.items():
             if isinstance(value, (PIPO, Inchworm)):
                 self.rams.append(name)
+            if isinstance(value, Stream):
+                self.strms.append(name)
 
         self.ram_forked: dict[str, bool] = dict()
         for ram in self.rams:
@@ -1324,7 +1380,8 @@ class CompileVisitor(ast.NodeVisitor):
         return ret
 
     def _visit_next_function(self, node: ast.FunctionDef):
-        append_ram_info(node, self.rams)
+        strm_info = get_strm_info(node, self.rams, self.strms)
+        append_ram_info(node, self.rams, strm_info)
         insert_push_pop(node, self.rams)
 
         if not self.is_in_forked_thread:
