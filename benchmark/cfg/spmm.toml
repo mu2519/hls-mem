@@ -16,15 +16,18 @@ rand_range = (-16, 16)
 
 sparsity = 0.1
 
-a_height = 16
-b_height = 16
-b_width = 16
-a_row_offset = 0 * 1024
-a_col_offset = 1 * 1024
-a_val_offset = 2 * 1024
-b_offset = 3 * 1024
-c_offset = 4 * 1024
-c_ref_offset = 5 * 1024'''
+datawidth = 32
+
+a_height = 64
+b_height = 64
+b_width = 64
+
+a_row_offset = 0 * 128 * 1024
+a_col_offset = 1 * 128 * 1024
+a_val_offset = 2 * 128 * 1024
+b_offset = 3 * 128 * 1024
+c_offset = 4 * 128 * 1024
+c_ref_offset = 5 * 128 * 1024'''
 
 imports = '''
 from scipy.sparse import csr_array'''

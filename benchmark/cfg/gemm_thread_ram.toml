@@ -1,0 +1,18 @@
+comp_body = '''
+a_addr = a_offset
+c_addr = c_offset
+for i in range(size_0):
+    maxi.dma_read(ram_a, 0, a_addr, size_1)
+    b_addr = b_offset
+    for j in range(size_2):
+        maxi.dma_read(ram_b, 0, b_addr, size_1)
+        sum = 0
+        for k in range(size_1):
+            x = ram_a.read(k)
+            y = ram_b.read(k)
+            sum += x * y
+        ram_c.write(j, sum)
+        b_addr += size_1 * (datawidth // 8)
+    maxi.dma_write(ram_c, 0, c_addr, size_2)
+    a_addr += size_1 * (datawidth // 8)
+    c_addr += size_2 * (datawidth // 8)'''

@@ -1,0 +1,7 @@
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+size = strm.parameter('size')
+a = strm.source('a')
+b = strm.source('b')
+sum, sum_valid = strm.ReduceAddValid(a * b, size)
+strm.sink(sum, 'sum', sum_valid, 'sum_valid')'''

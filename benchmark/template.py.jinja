@@ -12,10 +12,8 @@ from veriloggen.types.ipxact import to_ipxact
 
 {{ configs }}
 
-datawidth = 32
-
 # the capacity of the main memory is 2 ** mem_addrwidth bytes
-axi_datawidth = 32
+axi_datawidth = {{ axi_datawidth|default(32) }}
 axi_addrwidth = 32
 mem_datawidth = 32
 mem_addrwidth = 20
@@ -26,7 +24,7 @@ axireg_length = {{ regs|length + 3 }}
 
 counter_width = 32
 
-simulation_period = 1000000
+simulation_period = 10000000
 
 
 def mkdut() -> Module:
@@ -46,7 +44,11 @@ def mkdut() -> Module:
 
     {% if rams is defined %}
     {%- for ram in rams %}
+    {%- if ram is mapping %}
+    {{ ram['name'] }} = vthread.RAM(m, '{{ ram['name'] }}', clk, rst, datawidth={{ ram['datawidth'] }}, addrwidth={{ ram['addrwidth'] }}, numports={{ ram['numports']|default(1) }})
+    {%- else %}
     {{ ram[0] }} = vthread.RAM(m, '{{ ram[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ ram[1] }}, numports={{ ram[2]|default(1) }})
+    {%- endif %}
     {%- endfor %}
     {% endif %}
 

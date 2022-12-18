@@ -1,0 +1,43 @@
+regs = [ 'size_0', 'size_1', 'size_2', 'a_offset', 'b_offset', 'c_offset' ]
+
+arrs = [
+  [ 'a', 'a_offset' ],
+  [ 'b', 'b_offset' ],
+  [ 'c_ref', 'c_ref_offset' ],
+]
+
+configs = '''
+rand_range = (-16, 16)
+
+datawidth = 32
+
+size_0 = 32
+size_1 = 32
+size_2 = 32
+
+a_offset = 0 * 256 * 1024
+b_offset = 1 * 256 * 1024
+c_offset = 2 * 256 * 1024
+c_ref_offset = 3 * 256 * 1024
+'''
+
+set_arrs = '''
+a = np.zeros((size_0, size_1), dtype=np.int64)  # A is row major
+b = np.zeros((size_2, size_1), dtype=np.int64)  # B is column major
+for i in range(size_0):
+    for j in range(size_1):
+        a[i, j] = random.randint(*rand_range)
+for i in range(size_1):
+    for j in range(size_2):
+        b[j, i] = random.randint(*rand_range)
+c_ref = a @ b.T  # C is row major
+assert c_ref.shape == (size_0, size_2)
+assert c_ref.dtype == np.int64'''
+
+check = '''
+for i in range(size_0):
+    for j in range(size_2):
+        x = memory.read(c_offset + (size_2*i + j)*(datawidth//8))
+        y = memory.read(c_ref_offset + (size_2*i + j)*(datawidth//8))
+        if x != y:
+            flag = False'''
