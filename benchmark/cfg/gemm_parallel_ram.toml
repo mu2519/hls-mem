@@ -1,0 +1,44 @@
+rams = [
+  { name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = 10 },
+  { name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 10 },
+  { name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
+]
+
+axi_datawidth = 32
+
+configs = '''
+log_parallelism = 2
+parallelism = 1 << log_parallelism
+packed_datawidth = parallelism * datawidth'''
+
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+size = strm.parameter('size', datawidth)
+a_packed = strm.source('a', packed_datawidth)
+b_packed = strm.source('b', packed_datawidth)
+a_list = strm.Split(a_packed, datawidth)
+b_list = strm.Split(b_packed, datawidth)
+prod_list = [a * b for a, b in zip(a_list, b_list)]
+sum = strm.AddTree(*prod_list)
+c, c_valid = strm.ReduceAddValid(sum, size)
+strm.sink(c, 'c', c_valid, 'c_valid')'''
+
+comp_body = '''
+chunk_num = size_1 >> log_parallelism
+a_addr = a_offset
+c_addr = c_offset
+for i in range(size_0):
+    maxi.dma_read(ram_a, 0, a_addr, chunk_num)
+    b_addr = b_offset
+    for j in range(size_2):
+        maxi.dma_read(ram_b, 0, b_addr, chunk_num)
+        strm.set_parameter('size', chunk_num)
+        strm.set_source('a', ram_a, 0, chunk_num)
+        strm.set_source('b', ram_b, 0, chunk_num)
+        strm.set_sink('c', ram_c, j, 1)
+        strm.run()
+        strm.join()
+        b_addr += size_1 * (datawidth // 8)
+    maxi.dma_write(ram_c, 0, c_addr, size_2)
+    a_addr += size_1 * (datawidth // 8)
+    c_addr += size_2 * (datawidth // 8)'''
