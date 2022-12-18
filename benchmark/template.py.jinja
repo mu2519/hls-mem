@@ -54,7 +54,11 @@ def mkdut() -> Module:
 
     {% if pipos is defined %}
     {%- for pipo in pipos %}
+    {%- if pipo is mapping %}
+    {{ pipo['name'] }} = vthread.PIPO(m, '{{ pipo['name'] }}', clk, rst, datawidth={{ pipo['datawidth'] }}, addrwidth={{ pipo['addrwidth'] }}, numports={{ pipo['numports']|default(1) }})
+    {%- else %}
     {{ pipo[0] }} = vthread.PIPO(m, '{{ pipo[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ pipo[1] }}, numports={{ pipo[2]|default(1) }})
+    {%- endif %}
     {%- endfor %}
     {% endif %}
 
