@@ -7,7 +7,7 @@ import inspect
 import textwrap
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence, Callable, Iterable
-from typing import Any, Literal, TypeVar, TypeAlias, Optional
+from typing import Any, Literal, TypeVar, TypeAlias, Optional, get_origin, get_args
 from types import FunctionType, MethodType, FrameType
 
 from veriloggen.fsm.fsm import FSM
@@ -409,33 +409,41 @@ def make_pop_wait(ram: str) -> list[ast.Expr]:
     return [make_call_ast(ram, 'pop'), make_call_ast(ram, 'wait_not_full')]
 
 
-RamCtxType: TypeAlias = Literal['read', 'read_write', 'dma_read', 'dma_write']
+CtxType: TypeAlias = Literal['neutral', 'read', 'read_write', 'dma_read', 'dma_write']
+DMAReadCtxType: TypeAlias = Literal['neutral', 'read', 'dma_read']
+DMAWriteCtxType: TypeAlias = Literal['neutral', 'read_write', 'dma_write']
+
+
+def isinstance_literal(object, classinfo):
+    if get_origin(classinfo) is not Literal:
+        raise ValueError
+    return object in get_args(classinfo)
 
 
 def insert_push_pop_dma_read(
     body: list[ast.stmt],
     ram: str,
-    ctx: Literal['read', 'dma_read'],
-) -> Literal['read', 'dma_read']:
-    if ctx not in ['read', 'dma_read']:
+    ctx: DMAReadCtxType,
+) -> DMAReadCtxType:
+    if not isinstance_literal(ctx, DMAReadCtxType):
         raise ValueError
     idx = 0
     while idx < len(body):
         if ram in body[idx].ram_info:
             if {'read', 'dma_read'} <= body[idx].ram_info[ram]:
                 ctx = insert_push_pop_sub(body[idx], ram, ctx)
-                if ctx not in ['read', 'dma_read']:
+                if not isinstance_literal(ctx, DMAReadCtxType):
                     raise RuntimeError
             elif 'read' in body[idx].ram_info[ram]:
                 if ctx == 'dma_read':
                     body[idx:idx] = make_push_wait(ram)
                     idx += 2
-                    ctx = 'read'
+                ctx = 'read'
             elif 'dma_read' in body[idx].ram_info[ram]:
                 if ctx == 'read':
                     body[idx:idx] = make_pop_wait(ram)
                     idx += 2
-                    ctx = 'dma_read'
+                ctx = 'dma_read'
         idx += 1
     return ctx
 
@@ -443,9 +451,9 @@ def insert_push_pop_dma_read(
 def insert_push_pop_dma_write(
     body: list[ast.stmt],
     ram: str,
-    ctx: Literal['read_write', 'dma_write'],
-) -> Literal['read_write', 'dma_write']:
-    if ctx not in ['read_write', 'dma_write']:
+    ctx: DMAWriteCtxType,
+) -> DMAWriteCtxType:
+    if not isinstance_literal(ctx, DMAWriteCtxType):
         raise ValueError
     idx = 0
     while idx < len(body):
@@ -453,33 +461,30 @@ def insert_push_pop_dma_write(
             if ({'read', 'write'} & body[idx].ram_info[ram] and
                 'dma_write' in body[idx].ram_info[ram]):
                 ctx = insert_push_pop_sub(body[idx], ram, ctx)
-                if ctx not in ['read_write', 'dma_write']:
+                if not isinstance_literal(ctx, DMAWriteCtxType):
                     raise RuntimeError
             elif {'read', 'write'} & body[idx].ram_info[ram]:
                 if ctx == 'dma_write':
                     body[idx:idx] = make_pop_wait(ram)
                     idx += 2
-                    ctx = 'read_write'
+                ctx = 'read_write'
             elif 'dma_write' in body[idx].ram_info[ram]:
                 if ctx == 'read_write':
                     body[idx:idx] = make_push_wait(ram)
                     idx += 2
-                    ctx = 'dma_write'
+                ctx = 'dma_write'
         idx += 1
     return ctx
 
 
 def insert_push_pop_sub(
-    node: ast.AST,
+    node: ast.FunctionDef | ast.For | ast.While | ast.If,
     ram: str,
-    ctx: Optional[RamCtxType] = None,
-) -> Optional[RamCtxType]:
-    if (isinstance(node, ast.FunctionDef) and ctx is not None or
-        not isinstance(node, ast.FunctionDef) and ctx is None):
-        raise TypeError
-
+    ctx: CtxType = 'neutral',
+) -> CtxType:
     if ram not in node.ram_info:
-        return
+        raise ValueError
+
     if {'dma_read', 'dma_write'} <= node.ram_info[ram]:
         raise ValueError
     elif 'dma_read' in node.ram_info[ram]:
@@ -491,15 +496,21 @@ def insert_push_pop_sub(
             raise ValueError
         dma_kind = 'dma_write'
     else:
-        return
+        raise ValueError
 
     if isinstance(node, ast.FunctionDef):
+        if ctx != 'neutral':
+            raise ValueError
         body = node.body
         if dma_kind == 'dma_read':
-            insert_push_pop_dma_read(body, ram, 'dma_read')
+            ctx = insert_push_pop_dma_read(body, ram, ctx)
+            if ctx == 'read':
+                body.extend(make_pop_wait(ram))
         else:
-            insert_push_pop_dma_write(body, ram, 'read_write')
-        return None
+            ctx = insert_push_pop_dma_write(body, ram, ctx)
+            if ctx == 'dma_write':
+                body.extend(make_pop_wait(ram))
+        return 'neutral'
     elif isinstance(node, (ast.For, ast.While)):
         if node.orelse:
             raise ValueError
@@ -507,38 +518,38 @@ def insert_push_pop_sub(
         start_ctx = ctx
         if dma_kind == 'dma_read':
             ctx = insert_push_pop_dma_read(body, ram, ctx)
-            if ctx == start_ctx:
-                return ctx
-            else:
-                if ctx == 'dma_read':
-                    body.extend(make_push_wait(ram))
-                    return 'read'
-                else:
+            # doubtful logic
+            if ctx != start_ctx:
+                if ctx == 'read':
                     body.extend(make_pop_wait(ram))
-                    return 'dma_read'
+                elif ctx == 'dma_read':
+                    body.extend(make_push_wait(ram))
         else:
             ctx = insert_push_pop_dma_write(body, ram, ctx)
-            if ctx == start_ctx:
-                return ctx
-            else:
+            # doubtful logic
+            if ctx != start_ctx:
                 if ctx == 'read_write':
                     body.extend(make_push_wait(ram))
-                    return 'dma_write'
-                else:
+                elif ctx == 'dma_write':
                     body.extend(make_pop_wait(ram))
-                    return 'read_write'
+        return 'neutral'
     elif isinstance(node, ast.If):
-        body = node.body
-        orelse = node.orelse
-        # TODO: implement else statement
-        if orelse:
-            raise ValueError('Not implemented yet')
-        if dma_kind == 'dma_read':
-            ctx = insert_push_pop_dma_read(body, ram, ctx)
-            return ctx
-        else:
-            ctx = insert_push_pop_dma_write(body, ram, ctx)
-            return ctx
+        start_ctx = ctx
+        for body in [node.body, node.orelse]:
+            if body:
+                if dma_kind == 'dma_read':
+                    ctx = insert_push_pop_dma_read(body, ram, start_ctx)
+                    if ctx == 'read':
+                        body.extend(make_pop_wait(ram))
+                    elif ctx == 'dma_read':
+                        body.extend(make_push_wait(ram))
+                else:
+                    ctx = insert_push_pop_dma_write(body, ram, start_ctx)
+                    if ctx == 'read_write':
+                        body.extend(make_push_wait(ram))
+                    elif ctx == 'dma_write':
+                        body.extend(make_pop_wait(ram))
+        return 'neutral'
     else:
         raise TypeError(f'unexpected node type {type(node)}')
 
@@ -546,6 +557,10 @@ def insert_push_pop_sub(
 def insert_push_pop(node: ast.FunctionDef, rams: list[str]) -> None:
     """ change a given node in place! """
     for ram in rams:
+        if ram not in node.ram_info:
+            continue
+        if not {'dma_read', 'dma_write'} & node.ram_info[ram]:
+            continue
         insert_push_pop_sub(node, ram)
 
 

@@ -130,14 +130,12 @@ class PIPO(RAM):
 
     def dma_read(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
                  local_size, local_stride=1, port=0):
-        self.wait_not_full(fsm)
         axi.lock(fsm)
         axi.dma_read(fsm, self, local_addr, global_addr, local_size, local_stride, port)
         axi.unlock(fsm)
 
     def dma_write(self, fsm: FSM, axi: AXIM, local_addr, global_addr,
                   local_size, local_stride=1, port=0):
-        self.wait_not_empty(fsm)
         axi.lock(fsm)
         axi.dma_write(fsm, self, local_addr, global_addr, local_size, local_stride, port)
         axi.unlock(fsm)
