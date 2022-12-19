@@ -8,6 +8,8 @@ gemm_parallel_pipo = [ 'gemm', 'gemm_parallel', 'gemm_parallel_pipo' ]
 
 # SpMM
 spmm_thread_ram = [ 'spmm', 'spmm_ram', 'spmm_thread_ram' ]
-spmm_stream_ram = [ 'spmm', 'spmm_ram', 'spmm_stream_ram' ]
-spmm_parallel_ram = [ 'spmm', 'spmm_parallel_ram' ]
+spmm_stream_ram = [ 'spmm', 'spmm_ram', 'spmm_stream', 'spmm_stream_ram' ]
+spmm_parallel_ram = [ 'spmm', 'spmm_parallel', 'spmm_parallel_ram' ]
 spmm_thread_pipo = [ 'spmm', 'spmm_pipo', 'spmm_thread_pipo' ]
+spmm_stream_pipo = [ 'spmm', 'spmm_pipo', 'spmm_stream', 'spmm_stream_pipo' ]
+spmm_parallel_pipo = [ 'spmm', 'spmm_parallel', 'spmm_parallel_pipo' ]

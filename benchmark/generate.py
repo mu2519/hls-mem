@@ -9,7 +9,7 @@ def custom_merge(dst: dict, src: dict) -> None:
     for k in src:
         if k in dst:
             if isinstance(src[k], str) and isinstance(dst[k], str):
-                dst[k] = dst[k] + '\n' + src[k]
+                dst[k] = dst[k] + '\n\n' + src[k]
             elif isinstance(src[k], list) and isinstance(dst[k], list):
                 dst[k] = dst[k] + src[k]
             else:

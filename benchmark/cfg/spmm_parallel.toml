@@ -1,0 +1,17 @@
+axi_datawidth = 32
+
+configs = '''
+log_parallelism = 2
+parallelism = 1 << log_parallelism
+packed_datawidth = parallelism * datawidth'''
+
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+a = strm.parameter('a', datawidth)
+b_packed = strm.source('b', packed_datawidth)
+c_packed = strm.source('c', packed_datawidth)
+b_list = strm.Split(b_packed, datawidth)
+c_list = strm.Split(c_packed, datawidth)
+d_list = [c + a*b for b, c in zip(b_list, c_list)]
+d_packed = strm.Cat(*d_list)
+strm.sink(d_packed, 'd')'''

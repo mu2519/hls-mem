@@ -1,0 +1,7 @@
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+a = strm.parameter('a')
+b = strm.source('b')
+c = strm.source('c')
+d = c + a*b
+strm.sink(d, 'd')'''
