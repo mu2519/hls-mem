@@ -21,7 +21,10 @@ if TYPE_CHECKING:
 
 
 class RAM(_MutexFunction):
-    __intrinsics__ = ('read', 'write', 'dma_read', 'dma_write') + _MutexFunction.__intrinsics__
+    __intrinsics__ = (
+        'read', 'write', 'read_low_priority',
+        'dma_read', 'dma_write',
+    ) + _MutexFunction.__intrinsics__
 
     def __init__(
         self,
@@ -175,6 +178,30 @@ class RAM(_MutexFunction):
             rdata_reg(rdata)
         )
         fsm.Then().goto_next()
+
+        return rdata_reg
+
+    def read_low_priority(self, fsm: FSM, addr, port=0):
+        if self.interfaces[port].addr.assign_value is None:
+            self.interfaces[port].addr.assign(vtypes.Cond(fsm.here, addr, vtypes.IntX()))
+        elif isinstance(self.interfaces[port].addr.assign_value.statement.right, vtypes.Cond):
+            tgt = self.interfaces[port].addr.assign_value.statement.right
+            while isinstance(tgt.false_value, vtypes.Cond):
+                tgt = tgt.false_value
+            if str(tgt.false_value) != "'hx":
+                raise RuntimeError
+            tgt.false_value = vtypes.Cond(fsm.here, addr, vtypes.IntX())
+        else:
+            raise RuntimeError
+        util.add_enable_cond(self.interfaces[port].enable, fsm.here, vtypes.Int(1, 1))
+
+        rdata_reg = self.m.TmpReg(self.datawidth, prefix='read_low_priority')
+
+        fsm.If(self.interfaces[port].addr == addr, self.interfaces[port].enable).goto_next()
+        fsm(
+            rdata_reg(self.interfaces[port].rdata)
+        )
+        fsm.goto_next()
 
         return rdata_reg
 

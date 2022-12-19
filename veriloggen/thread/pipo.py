@@ -15,9 +15,11 @@ def add_cond(tgt: vtypes._Variable, cond):
 
 
 class PIPO(RAM):
-    __intrinsics__ = ('push', 'pop',
-                      'wait_not_empty', 'wait_not_full',
-                      'dma_read', 'dma_write') + RAM.__intrinsics__
+    __intrinsics__ = (
+        'push', 'pop',
+        'wait_not_empty', 'wait_not_full',
+        'dma_read', 'dma_write',
+    ) + RAM.__intrinsics__
 
     def __init__(
         self,

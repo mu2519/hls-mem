@@ -328,16 +328,30 @@ def extract_dma_relevant(
                         partial(find_dma_relevant, ram_name=ram, dma_kind=dma_kind)))
 
 
-def find_side_effect(node: ast.AST) -> bool:
+def find_side_effect(node: ast.AST, scope: dict[str, Any]) -> bool:
     if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            inst_name = node.func.value.id
+            method_name = node.func.attr
+            if inst_name in scope:
+                if isinstance(scope[inst_name], RAM):
+                    if method_name == 'read':
+                        return False
         return True
-    return any(map(find_side_effect, ast.iter_child_nodes(node)))
+    return any(map(partial(find_side_effect, scope=scope), ast.iter_child_nodes(node)))
 
 
-def get_side_effect_vars(node: ast.AST) -> set[str]:
+def get_side_effect_vars(node: ast.AST, scope: dict[str, Any]) -> set[str]:
     if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            inst_name = node.func.value.id
+            method_name = node.func.attr
+            if inst_name in scope:
+                if isinstance(scope[inst_name], RAM):
+                    if method_name == 'read':
+                        return set()
         return get_vars(node.args) | get_vars([kw.value for kw in node.keywords])
-    return reduce(union, map(get_side_effect_vars, ast.iter_child_nodes(node)), set())
+    return fold_map_set(partial(get_side_effect_vars, scope=scope), ast.iter_child_nodes(node))
 
 
 def temporary(
@@ -350,7 +364,11 @@ def temporary(
     return True
 
 
-def extract_dma_irrelevant(node: ast.stmt, rams: Sequence[str]) -> ast.stmt | None:
+def extract_dma_irrelevant(
+    node: ast.stmt,
+    rams: list[str],
+    scope: dict[str, Any],
+) -> ast.stmt | None:
     info = []
     for ram_name in rams:
         ram_methods = get_called_methods(node, ram_name)
@@ -367,11 +385,29 @@ def extract_dma_irrelevant(node: ast.stmt, rams: Sequence[str]) -> ast.stmt | No
     if node is None:
         return None
     graph = make_dep_graph(node)
-    reachable = collect_reachable(graph, get_side_effect_vars(node))
+    reachable = collect_reachable(graph, get_side_effect_vars(node, scope))
     needed_vars: set[str] = set(filter(lambda x: isinstance(x, str), reachable))
     return filter_stmt(node,
                        (partial(find_var_modif, vars=needed_vars),
-                        find_side_effect))
+                        partial(find_side_effect, scope=scope)))
+
+
+def replace_ram_read_sub(node: ast.AST, scope: dict[str, Any]) -> None:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        attr = node.func.attr
+        if isinstance(value, ast.Name) and value.id in scope:
+            if isinstance(scope[value.id], RAM) and not isinstance(scope[value.id], PIPO):
+                if attr == 'read':
+                    node.func.attr = 'read_low_priority'
+    for n in ast.iter_child_nodes(node):
+        replace_ram_read_sub(n, scope)
+
+
+def replace_ram_read(node: ast.AST, scope: dict[str, Any]) -> ast.AST:
+    node = copy.deepcopy(node)
+    replace_ram_read_sub(node, scope)
+    return node
 
 
 # stream (name) -> ram (name) -> associated operations
@@ -746,6 +782,8 @@ class CompileVisitor(ast.NodeVisitor):
             if dma_relevant_code is None:
                 continue
 
+            dma_relevant_code = replace_ram_read(dma_relevant_code, self.frame_scope)
+
             print(ast.unparse(dma_relevant_code))
             print()
 
@@ -783,7 +821,7 @@ class CompileVisitor(ast.NodeVisitor):
 
             forked_rams.append(ram)
 
-        dma_irrelevant_code = extract_dma_irrelevant(node, forked_rams)
+        dma_irrelevant_code = extract_dma_irrelevant(node, forked_rams, self.frame_scope)
         if dma_irrelevant_code is not None:
             print(ast.unparse(dma_irrelevant_code))
             print()
