@@ -6,10 +6,10 @@ arrs = [
   [ 'c_ref', 'c_ref_offset' ],
 ]
 
+datawidth = 32
+
 configs = '''
 rand_range = (-16, 16)
-
-datawidth = 32
 
 size_0 = 32
 size_1 = 32

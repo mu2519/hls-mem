@@ -11,12 +11,12 @@ arrs = [
   ['c_ref', 'c_ref_offset'],
 ]
 
+datawidth = 32
+
 configs = '''
 rand_range = (-16, 16)
 
 sparsity = 0.1
-
-datawidth = 32
 
 a_height = 64
 b_height = 64

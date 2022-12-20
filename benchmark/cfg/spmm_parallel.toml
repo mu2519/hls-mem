@@ -1,7 +1,7 @@
-axi_datawidth = 32
+axi_datawidth = 512
 
 configs = '''
-log_parallelism = 2
+log_parallelism = 4
 parallelism = 1 << log_parallelism
 packed_datawidth = parallelism * datawidth'''
 

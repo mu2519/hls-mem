@@ -10,13 +10,13 @@ from veriloggen.types.ipxact import to_ipxact
 {{ imports }}
 
 
-{{ configs }}
-
 # the capacity of the main memory is 2 ** mem_addrwidth bytes
-axi_datawidth = {{ axi_datawidth|default(32) }}
-axi_addrwidth = 32
-mem_datawidth = 32
 mem_addrwidth = 20
+
+datawidth = {{ datawidth }}
+
+axi_datawidth = {{ axi_datawidth|default(datawidth) }}
+axi_addrwidth = 32
 
 axilite_datawidth = 32
 axilite_addrwidth = 32
@@ -25,6 +25,8 @@ axireg_length = {{ regs|length + 3 }}
 counter_width = 32
 
 simulation_period = 10000000
+
+{{ configs }}
 
 
 def mkdut() -> Module:
@@ -113,10 +115,10 @@ def mktb() -> Module:
 
     {{ set_arrs|indent(4) }}
 
-    memimg = np.zeros(2**mem_addrwidth // (mem_datawidth//8), dtype=np.int64)
+    memimg = np.zeros(2**mem_addrwidth, dtype=np.int64)
 
     {%- for array, offset in arrs %}
-    axi.set_memory(memimg, {{ array }}, mem_datawidth, mem_datawidth, {{ offset }})
+    axi.set_memory(memimg, {{ array }}, datawidth, datawidth, {{ offset }})
     {%- endfor %}
 
     dut = mkdut()
@@ -131,7 +133,7 @@ def mktb() -> Module:
     memory = axi.AxiMultiportMemoryModel(m, 'memory', clk, rst,
                                          datawidth=axi_datawidth,
                                          addrwidth=axi_addrwidth,
-                                         mem_datawidth=mem_datawidth,
+                                         mem_datawidth=axi_datawidth,
                                          mem_addrwidth=mem_addrwidth,
                                          memimg=memimg,
                                          memimg_name='memory_dump',
@@ -143,7 +145,7 @@ def mktb() -> Module:
     memory = axi.AxiMemoryModel(m, 'memory', clk, rst,
                                 datawidth=axi_datawidth,
                                 addrwidth=axi_addrwidth,
-                                mem_datawidth=mem_datawidth,
+                                mem_datawidth=axi_datawidth,
                                 mem_addrwidth=mem_addrwidth,
                                 memimg=memimg, memimg_name='memory_dump')
     memory.connect(ports, 'maxi')
