@@ -1,5 +1,5 @@
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import annotations
+
 import collections
 import copy
 import re
@@ -630,9 +630,11 @@ class Module(vtypes.VeriloggenNode):
         return v
 
     # -------------------------------------------------------------------------
-    def copy_params(self, src, prefix=None, postfix=None,
-                    include=None, exclude=None, rename_exclude=None,
-                    use_fullmatch=False):
+    def copy_params(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False
+    ) -> collections.OrderedDict[str, vtypes.Parameter]:
 
         if prefix is None:
             prefix = ''
@@ -677,9 +679,11 @@ class Module(vtypes.VeriloggenNode):
             ret[copy_obj.name] = copy_obj
         return ret
 
-    def copy_params_as_localparams(self, src, prefix=None, postfix=None,
-                                   include=None, exclude=None, rename_exclude=None,
-                                   use_fullmatch=False):
+    def copy_params_as_localparams(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False
+    ) -> collections.OrderedDict[str, vtypes.Localparam]:
 
         if prefix is None:
             prefix = ''
@@ -725,9 +729,11 @@ class Module(vtypes.VeriloggenNode):
             ret[copy_obj.name] = copy_obj
         return ret
 
-    def copy_localparams(self, src, prefix=None, postfix=None,
-                         include=None, exclude=None, rename_exclude=None,
-                         use_fullmatch=False):
+    def copy_localparams(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False
+    ) -> collections.OrderedDict[str, vtypes.Localparam]:
 
         if prefix is None:
             prefix = ''
@@ -772,9 +778,11 @@ class Module(vtypes.VeriloggenNode):
             ret[copy_obj.name] = copy_obj
         return ret
 
-    def copy_ports(self, src, prefix=None, postfix=None,
-                   include=None, exclude=None, rename_exclude=None,
-                   use_fullmatch=False):
+    def copy_ports(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False
+    ) -> collections.OrderedDict[str, vtypes.Input | vtypes.Output | vtypes.Inout]:
 
         if prefix is None:
             prefix = ''
@@ -819,9 +827,11 @@ class Module(vtypes.VeriloggenNode):
             ret[copy_obj.name] = copy_obj
         return ret
 
-    def copy_ports_as_vars(self, src, prefix=None, postfix=None,
-                           include=None, exclude=None, rename_exclude=None,
-                           use_fullmatch=False, use_wire=False):
+    def copy_ports_as_vars(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False, use_wire=False
+    ) -> collections.OrderedDict[str, vtypes.Wire | vtypes.Reg]:
 
         if prefix is None:
             prefix = ''
@@ -869,9 +879,11 @@ class Module(vtypes.VeriloggenNode):
             ret[copy_obj.name] = copy_obj
         return ret
 
-    def copy_vars(self, src, prefix=None, postfix=None,
-                  include=None, exclude=None, rename_exclude=None,
-                  use_fullmatch=False):
+    def copy_vars(
+        self, src: Module, prefix=None, postfix=None,
+        include=None, exclude=None, rename_exclude=None,
+        use_fullmatch=False
+    ) -> collections.OrderedDict[str, vtypes.Wire | vtypes.Reg | vtypes.Integer | vtypes.Real | vtypes.Genvar]:
 
         if prefix is None:
             prefix = ''
@@ -925,7 +937,7 @@ class Module(vtypes.VeriloggenNode):
                                        use_fullmatch, use_wire)
 
     # -------------------------------------------------------------------------
-    def connect_params(self, targ, prefix=None, postfix=None,
+    def connect_params(self, targ: Module, prefix=None, postfix=None,
                        include=None, exclude=None, strict=False,
                        use_fullmatch=False):
 
@@ -970,7 +982,7 @@ class Module(vtypes.VeriloggenNode):
                 ret[key] = self.local_constant[my_key]
         return ret
 
-    def connect_ports(self, targ, prefix=None, postfix=None,
+    def connect_ports(self, targ: Module, prefix=None, postfix=None,
                       include=None, exclude=None, strict=False,
                       use_fullmatch=False):
 

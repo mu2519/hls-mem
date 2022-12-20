@@ -1,0 +1,7 @@
+axis = [
+  'axi_a_row',
+  'axi_a_col',
+  'axi_a_val',
+  'axi_b',
+  'axi_c',
+]

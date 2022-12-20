@@ -66,9 +66,14 @@ def mkdut() -> Module:
     {{ strm_defs|indent(4) }}
     {%- endif %}
 
-    maxi = vthread.AXIM(m, 'maxi', clk, rst,
-                        datawidth=axi_datawidth,
-                        addrwidth=axi_addrwidth)
+    {% if axis is defined %}
+    {%- for axi in axis %}
+    {{ axi }} = vthread.AXIM(m, '{{ axi }}', clk, rst, datawidth=axi_datawidth, addrwidth=axi_addrwidth)
+    {%- endfor %}
+    {% else %}
+    maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth=axi_datawidth, addrwidth=axi_addrwidth)
+    {% endif %}
+
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst,
                                     datawidth=axilite_datawidth,
                                     addrwidth=axilite_addrwidth,
@@ -117,10 +122,24 @@ def mktb() -> Module:
     dut = mkdut()
 
     m = Module('tb')
+    params = m.copy_params(dut)
     ports = m.copy_sim_ports(dut)
     clk = ports['CLK']
     rst = ports['RST']
 
+    {% if axis is defined %}
+    memory = axi.AxiMultiportMemoryModel(m, 'memory', clk, rst,
+                                         datawidth=axi_datawidth,
+                                         addrwidth=axi_addrwidth,
+                                         mem_datawidth=mem_datawidth,
+                                         mem_addrwidth=mem_addrwidth,
+                                         memimg=memimg,
+                                         memimg_name='memory_dump',
+                                         numports={{ axis|length }})
+    {%- for axi in axis %}
+    memory.connect({{ loop.index0 }}, ports, '{{ axi }}')
+    {%- endfor %}
+    {% else %}
     memory = axi.AxiMemoryModel(m, 'memory', clk, rst,
                                 datawidth=axi_datawidth,
                                 addrwidth=axi_addrwidth,
@@ -128,6 +147,7 @@ def mktb() -> Module:
                                 mem_addrwidth=mem_addrwidth,
                                 memimg=memimg, memimg_name='memory_dump')
     memory.connect(ports, 'maxi')
+    {% endif %}
 
     _saxi = vthread.AXIMLite(m, '_saxi', clk, rst,
                              datawidth=axilite_datawidth,

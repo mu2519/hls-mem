@@ -1491,7 +1491,7 @@ class AxiSlave(object):
 
         return ack
 
-    def connect(self, ports, name):
+    def connect(self, ports: dict[str, vtypes.Wire | vtypes.Reg], name: str):
         if not self.noio:
             raise ValueError('I/O ports can not be connected to others.')
 
@@ -3150,7 +3150,7 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
             rdata_fsm.If(rdata.rvalid, rdata.rready,
                          read_count == 0).goto_init()
 
-    def connect(self, index, ports, name):
+    def connect(self, index: int, ports: dict[str, vtypes.Wire | vtypes.Reg], name: str):
         if not self.noio:
             raise ValueError('I/O ports can not be connected to others.')
 

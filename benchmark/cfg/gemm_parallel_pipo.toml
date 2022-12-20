@@ -9,10 +9,10 @@ chunk_num = size_1 >> log_parallelism
 a_addr = a_offset
 c_addr = c_offset
 for i in range(size_0):
-    ram_a.dma_read(maxi, 0, a_addr, chunk_num)
+    ram_a.dma_read(axi_a, 0, a_addr, chunk_num)
     b_addr = b_offset
     for j in range(size_2):
-        ram_b.dma_read(maxi, 0, b_addr, chunk_num)
+        ram_b.dma_read(axi_b, 0, b_addr, chunk_num)
         strm.set_parameter('size', chunk_num)
         strm.set_source('a', ram_a, 0, chunk_num)
         strm.set_source('b', ram_b, 0, chunk_num)
@@ -20,6 +20,6 @@ for i in range(size_0):
         strm.run()
         strm.join()
         b_addr += size_1 * (datawidth // 8)
-    ram_c.dma_write(maxi, 0, c_addr, size_2)
+    ram_c.dma_write(axi_c, 0, c_addr, size_2)
     a_addr += size_1 * (datawidth // 8)
     c_addr += size_2 * (datawidth // 8)'''

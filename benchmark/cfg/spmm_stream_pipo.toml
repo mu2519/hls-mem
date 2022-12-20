@@ -1,5 +1,5 @@
 comp_body = '''
-ram_a_row.dma_read(maxi, 0, a_row_offset, a_height + 1)
+ram_a_row.dma_read(axi_a_row, 0, a_row_offset, a_height + 1)
 row_begin = ram_a_row.read(0)
 a_col_addr = a_col_offset
 a_val_addr = a_val_offset
@@ -11,14 +11,14 @@ for i in range(1, a_height + 1):
     for l in range(b_width):
         ram_c.write(l, 0)
     if row_range > 0:
-        ram_a_col.dma_read(maxi, 0, a_col_addr, row_range)
-        ram_a_val.dma_read(maxi, 0, a_val_addr, row_range)
+        ram_a_col.dma_read(axi_a_col, 0, a_col_addr, row_range)
+        ram_a_val.dma_read(axi_a_val, 0, a_val_addr, row_range)
         a_col_addr += row_range * (datawidth // 8)
         a_val_addr += row_range * (datawidth // 8)
         for j in range(row_range):
             idx = ram_a_col.read(j)
             b_addr = b_offset + idx * b_width * (datawidth // 8)
-            ram_b.dma_read(maxi, 0, b_addr, b_width)
+            ram_b.dma_read(axi_b, 0, b_addr, b_width)
             x = ram_a_val.read(j)
             strm.set_parameter('a', x)
             strm.set_source('b', ram_b, 0, b_width)
@@ -26,5 +26,5 @@ for i in range(1, a_height + 1):
             strm.set_sink('d', ram_c, 0, b_width, port=1)
             strm.run()
             strm.join()
-    ram_c.dma_write(maxi, 0, c_addr, b_width)
+    ram_c.dma_write(axi_c, 0, c_addr, b_width)
     c_addr += b_width * (datawidth // 8)'''
