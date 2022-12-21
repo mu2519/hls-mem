@@ -4,15 +4,21 @@ rams = [
   { name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
 ]
 
+# [ name, datawidth ]
+axis = [
+  [ 'axi_narrow', 'datawidth' ],
+  [ 'axi_wide', 'packed_datawidth' ],
+]
+
 comp_body = '''
 chunk_num = size_1 >> log_parallelism
 a_addr = a_offset
 c_addr = c_offset
 for i in range(size_0):
-    maxi.dma_read(ram_a, 0, a_addr, chunk_num)
+    axi_wide.dma_read(ram_a, 0, a_addr, chunk_num)
     b_addr = b_offset
     for j in range(size_2):
-        maxi.dma_read(ram_b, 0, b_addr, chunk_num)
+        axi_wide.dma_read(ram_b, 0, b_addr, chunk_num)
         strm.set_parameter('size', chunk_num)
         strm.set_source('a', ram_a, 0, chunk_num)
         strm.set_source('b', ram_b, 0, chunk_num)
@@ -20,6 +26,6 @@ for i in range(size_0):
         strm.run()
         strm.join()
         b_addr += size_1 * (datawidth // 8)
-    maxi.dma_write(ram_c, 0, c_addr, size_2)
+    axi_narrow.dma_write(ram_c, 0, c_addr, size_2)
     a_addr += size_1 * (datawidth // 8)
     c_addr += size_2 * (datawidth // 8)'''

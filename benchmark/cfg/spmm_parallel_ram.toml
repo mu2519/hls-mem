@@ -6,9 +6,15 @@ rams = [
   { name = 'ram_c', datawidth = 'packed_datawidth', addrwidth = 10, numports = 2 },
 ]
 
+# [ name, datawidth ]
+axis = [
+  [ 'axi_narrow', 'datawidth' ],
+  [ 'axi_wide', 'packed_datawidth' ],
+]
+
 comp_body = '''
 b_chunk_num = b_width >> log_parallelism
-maxi.dma_read(ram_a_row, 0, a_row_offset, a_height + 1)
+axi_narrow.dma_read(ram_a_row, 0, a_row_offset, a_height + 1)
 row_begin = ram_a_row.read(0)
 a_col_addr = a_col_offset
 a_val_addr = a_val_offset
@@ -20,14 +26,14 @@ for i in range(1, a_height + 1):
     for l in range(b_chunk_num):
         ram_c.write(l, 0)
     if row_range > 0:
-        maxi.dma_read(ram_a_col, 0, a_col_addr, row_range)
-        maxi.dma_read(ram_a_val, 0, a_val_addr, row_range)
+        axi_narrow.dma_read(ram_a_col, 0, a_col_addr, row_range)
+        axi_narrow.dma_read(ram_a_val, 0, a_val_addr, row_range)
         a_col_addr += row_range * (datawidth // 8)
         a_val_addr += row_range * (datawidth // 8)
         for j in range(row_range):
             idx = ram_a_col.read(j)
             b_addr = b_offset + idx * b_width * (datawidth // 8)
-            maxi.dma_read(ram_b, 0, b_addr, b_chunk_num)
+            axi_wide.dma_read(ram_b, 0, b_addr, b_chunk_num)
             x = ram_a_val.read(j)
             strm.set_parameter('a', x)
             strm.set_source('b', ram_b, 0, b_chunk_num)
@@ -35,5 +41,5 @@ for i in range(1, a_height + 1):
             strm.set_sink('d', ram_c, 0, b_chunk_num, port=1)
             strm.run()
             strm.join()
-    maxi.dma_write(ram_c, 0, c_addr, b_chunk_num)
+    axi_wide.dma_write(ram_c, 0, c_addr, b_chunk_num)
     c_addr += b_width * (datawidth // 8)'''
