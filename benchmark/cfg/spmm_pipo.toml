@@ -10,3 +10,12 @@ pipos = [
   [ 'ram_b', 10 ],
   [ 'ram_c', 10, 2 ],
 ]
+
+# [ name, datawidth ]
+axis = [
+  [ 'axi_a_row', 'datawidth' ],
+  [ 'axi_a_col', 'datawidth' ],
+  [ 'axi_a_val', 'datawidth' ],
+  [ 'axi_b', 'datawidth' ],
+  [ 'axi_c', 'datawidth' ],
+]

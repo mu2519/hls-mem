@@ -1,6 +1,9 @@
 import functools
 import math
 from collections import defaultdict
+from collections.abc import Sequence
+
+from numpy.typing import ArrayLike
 
 import veriloggen.core.vtypes as vtypes
 from veriloggen.seq.seq import Seq
@@ -2269,18 +2272,62 @@ class AxiMemoryModel(AxiSlave):
     __intrinsics__ = ('read', 'write',
                       'read_word', 'write_word')
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32,
-                 mem_datawidth=32, mem_addrwidth=20,
-                 memimg=None, memimg_name=None,
-                 memimg_datawidth=None,
-                 write_delay=10, read_delay=10, sleep_interval=16, keep_sleep=4,
-                 waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
-                 raddr_id_width=0, rdata_id_width=0,
-                 waddr_user_width=2, wdata_user_width=0, wresp_user_width=0,
-                 raddr_user_width=2, rdata_user_width=0,
-                 wresp_user_mode=xUSER_DEFAULT,
-                 rdata_user_mode=xUSER_DEFAULT,
-                 req_fifo_addrwidth=3):
+    def __init__(
+        self,
+        m: Module,
+        name: str,
+        clk: vtypes._Variable,
+        rst: vtypes._Variable,
+        datawidth: int = 32,
+        addrwidth: int = 32,
+        mem_datawidth: int = 32,
+        mem_addrwidth: int = 20,
+        memimg: str | ArrayLike | None = None,
+        memimg_name: str | None = None,
+        memimg_datawidth: int | None = None,
+        write_delay=10,
+        read_delay=10,
+        sleep_interval=16,
+        keep_sleep=4,
+        waddr_id_width=0,
+        wdata_id_width=0,
+        wresp_id_width=0,
+        raddr_id_width=0,
+        rdata_id_width=0,
+        waddr_user_width=2,
+        wdata_user_width=0,
+        wresp_user_width=0,
+        raddr_user_width=2,
+        rdata_user_width=0,
+        wresp_user_mode=xUSER_DEFAULT,
+        rdata_user_mode=xUSER_DEFAULT,
+        req_fifo_addrwidth=3,
+    ):
+        """
+        Parameters
+        ----------
+        datawidth : int
+            The data width of the AXI interface.
+        addrwidth : int
+            The address width of the AXI interface.
+        mem_datawidth : int
+            This parameter determines
+            the data width of read and write methods.
+            It is not used by other methods.
+        mem_addrwidth : int
+            This parameter determines the size of a memory image.
+            It is not used for other purposes.
+        memimg : str or array_like
+            The name of a memory image file (str).
+            The array for a memory image (array_like).
+        memimg_name: str
+            The name of a memory image.
+        memimg_datawidth : int
+            This parameter is used
+            when the file used by $readmemh is generated.
+            The array given in memimg is interpreted
+            to have the data width of memimg_datawidth.
+        """
 
         if mem_datawidth % 8 != 0:
             raise ValueError('mem_datawidth must be a multiple of 8')
@@ -2803,21 +2850,50 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
     __intrinsics__ = ('read', 'write',
                       'read_word', 'write_word')
 
-    def __init__(self, m, name, clk, rst, datawidth=32, addrwidth=32, numports=2,
-                 mem_datawidth=32, mem_addrwidth=20,
-                 memimg=None, memimg_name=None,
-                 memimg_datawidth=None,
-                 write_delay=10, read_delay=10, sleep_interval=16, keep_sleep=4,
-                 waddr_id_width=0, wdata_id_width=0, wresp_id_width=0,
-                 raddr_id_width=0, rdata_id_width=0,
-                 waddr_user_width=2, wdata_user_width=0, wresp_user_width=0,
-                 raddr_user_width=2, rdata_user_width=0,
-                 wresp_user_mode=xUSER_DEFAULT,
-                 rdata_user_mode=xUSER_DEFAULT,
-                 req_fifo_addrwidth=3):
+    def __init__(
+        self,
+        m: Module,
+        name: str,
+        clk: vtypes._Variable,
+        rst: vtypes._Variable,
+        datawidth: int | Sequence[int] = 32,
+        addrwidth: int = 32,
+        numports: int = 2,
+        mem_datawidth: int = 32,
+        mem_addrwidth: int = 20,
+        memimg: str | ArrayLike | None = None,
+        memimg_name: str | None = None,
+        memimg_datawidth: int | None = None,
+        write_delay=10,
+        read_delay=10,
+        sleep_interval=16,
+        keep_sleep=4,
+        waddr_id_width=0,
+        wdata_id_width=0,
+        wresp_id_width=0,
+        raddr_id_width=0,
+        rdata_id_width=0,
+        waddr_user_width=2,
+        wdata_user_width=0,
+        wresp_user_width=0,
+        raddr_user_width=2,
+        rdata_user_width=0,
+        wresp_user_mode=xUSER_DEFAULT,
+        rdata_user_mode=xUSER_DEFAULT,
+        req_fifo_addrwidth=3,
+    ):
 
         if mem_datawidth % 8 != 0:
             raise ValueError('mem_datawidth must be a multiple of 8')
+
+        if isinstance(datawidth, int):
+            datawidth = [datawidth] * numports
+        elif isinstance(datawidth, Sequence):
+            if len(datawidth) != numports:
+                raise ValueError
+            datawidth = list(datawidth)
+        else:
+            raise TypeError(f'unexpected type {type(datawidth)}')
 
         self.m = m
         self.name = name
@@ -2838,19 +2914,19 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
         itype = util.t_Reg
         otype = util.t_Wire
 
-        self.waddrs = [AxiSlaveWriteAddress(m, name + '_%d' % i, datawidth, addrwidth,
+        self.waddrs = [AxiSlaveWriteAddress(m, name + '_%d' % i, datawidth[i], addrwidth,
                                             waddr_id_width, waddr_user_width, itype, otype)
                        for i in range(numports)]
-        self.wdatas = [AxiSlaveWriteData(m, name + '_%d' % i, datawidth, addrwidth,
+        self.wdatas = [AxiSlaveWriteData(m, name + '_%d' % i, datawidth[i], addrwidth,
                                          wdata_id_width, wdata_user_width, itype, otype)
                        for i in range(numports)]
-        self.wresps = [AxiSlaveWriteResponse(m, name + '%d' % i, datawidth, addrwidth,
+        self.wresps = [AxiSlaveWriteResponse(m, name + '%d' % i, datawidth[i], addrwidth,
                                              wresp_id_width, wresp_user_width, itype, otype)
                        for i in range(numports)]
-        self.raddrs = [AxiSlaveReadAddress(m, name + '_%d' % i, datawidth, addrwidth,
+        self.raddrs = [AxiSlaveReadAddress(m, name + '_%d' % i, datawidth[i], addrwidth,
                                            raddr_id_width, raddr_user_width, itype, otype)
                        for i in range(numports)]
-        self.rdatas = [AxiSlaveReadData(m, name + '_%d' % i, datawidth, addrwidth,
+        self.rdatas = [AxiSlaveReadData(m, name + '_%d' % i, datawidth[i], addrwidth,
                                         rdata_id_width, rdata_user_width, itype, otype)
                        for i in range(numports)]
 
@@ -3023,14 +3099,14 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
             wdata_fsm.If(vtypes.Not(wreq_fifo.empty)).goto_next()
 
             # write
-            for i in range(int(self.datawidth / 8)):
+            for j in range(int(self.datawidth[i] / 8)):
                 self.seq.If(wdata_fsm.here,
-                            wdata.wvalid, wdata.wready, wdata.wstrb[i])(
-                    self.mem[write_addr + i](wdata.wdata[i * 8:i * 8 + 8])
+                            wdata.wvalid, wdata.wready, wdata.wstrb[j])(
+                    self.mem[write_addr + j](wdata.wdata[j * 8:j * 8 + 8])
                 )
 
             wdata_fsm.If(wdata.wvalid, wdata.wready)(
-                write_addr.add(int(self.datawidth / 8)),
+                write_addr.add(int(self.datawidth[i] / 8)),
                 write_count.dec()
             )
 
@@ -3105,16 +3181,16 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
                 rdata_fsm.goto_next()
 
             # read
-            for i in range(int(self.datawidth / 8)):
+            for j in range(int(self.datawidth[i] / 8)):
                 rdata_fsm.If(vtypes.Or(rdata.rready, vtypes.Not(rdata.rvalid)))(
-                    rdata.rdata[i * 8:i * 8 + 8](self.mem[read_addr + i])
+                    rdata.rdata[j * 8:j * 8 + 8](self.mem[read_addr + j])
                 )
 
             if sleep_interval > 0:
                 rdata_fsm.If(sleep_interval_count < sleep_interval - 1, read_count > 0,
                              vtypes.Or(rdata.rready, vtypes.Not(rdata.rvalid)))(
                     rdata.rvalid(1),
-                    read_addr.add(int(self.datawidth / 8)),
+                    read_addr.add(int(self.datawidth[i] / 8)),
                     read_count.dec()
                 )
                 rdata_fsm.If(sleep_interval_count < sleep_interval - 1, read_count == 1,
@@ -3125,7 +3201,7 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
                 rdata_fsm.If(read_count > 0,
                              vtypes.Or(rdata.rready, vtypes.Not(rdata.rvalid)))(
                     rdata.rvalid(1),
-                    read_addr.add(int(self.datawidth / 8)),
+                    read_addr.add(int(self.datawidth[i] / 8)),
                     read_count.dec()
                 )
                 rdata_fsm.If(read_count == 1,
@@ -3180,7 +3256,7 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
         self.waddrs[index].awaddr.connect(awaddr)
         self.waddrs[index].awlen.connect(awlen if awlen is not None else 0)
         self.waddrs[index].awsize.connect(awsize if awsize is not None else
-                                          int(math.log(self.datawidth // 8)))
+                                          int(math.log(self.datawidth[index] // 8)))
         self.waddrs[index].awburst.connect(awburst if awburst is not None else BURST_INCR)
         self.waddrs[index].awlock.connect(awlock if awlock is not None else 0)
         self.waddrs[index].awcache.connect(awcache)
@@ -3253,7 +3329,7 @@ class AxiMultiportMemoryModel(AxiMemoryModel):
         self.raddrs[index].araddr.connect(araddr)
         self.raddrs[index].arlen.connect(arlen if arlen is not None else 0)
         self.raddrs[index].arsize.connect(arsize if arsize is not None else
-                                          int(math.log(self.datawidth // 8)))
+                                          int(math.log(self.datawidth[index] // 8)))
         self.raddrs[index].arburst.connect(arburst if arburst is not None else BURST_INCR)
         self.raddrs[index].arlock.connect(arlock if arlock is not None else 0)
         self.raddrs[index].arcache.connect(arcache)

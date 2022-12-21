@@ -10,12 +10,11 @@ from veriloggen.types.ipxact import to_ipxact
 {{ imports }}
 
 
-# the capacity of the main memory is 2 ** mem_addrwidth bytes
-mem_addrwidth = 20
+# the capacity of memory (in bytes)
+memory_capacity = 2**20
 
 datawidth = {{ datawidth }}
 
-axi_datawidth = {{ axi_datawidth|default(datawidth) }}
 axi_addrwidth = 32
 
 axilite_datawidth = 32
@@ -70,10 +69,10 @@ def mkdut() -> Module:
 
     {% if axis is defined %}
     {%- for axi in axis %}
-    {{ axi }} = vthread.AXIM(m, '{{ axi }}', clk, rst, datawidth=axi_datawidth, addrwidth=axi_addrwidth)
+    {{ axi|first }} = vthread.AXIM(m, '{{ axi|first }}', clk, rst, datawidth={{ axi|last }}, addrwidth=axi_addrwidth)
     {%- endfor %}
     {% else %}
-    maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth=axi_datawidth, addrwidth=axi_addrwidth)
+    maxi = vthread.AXIM(m, 'maxi', clk, rst, datawidth=datawidth, addrwidth=axi_addrwidth)
     {% endif %}
 
     saxi = vthread.AXISLiteRegister(m, 'saxi', clk, rst,
@@ -115,7 +114,7 @@ def mktb() -> Module:
 
     {{ set_arrs|indent(4) }}
 
-    memimg = np.zeros(2**mem_addrwidth, dtype=np.int64)
+    memimg = np.zeros(memory_capacity // (datawidth // 8), dtype=np.int64)
 
     {%- for array, offset in arrs %}
     axi.set_memory(memimg, {{ array }}, datawidth, datawidth, {{ offset }})
@@ -131,23 +130,26 @@ def mktb() -> Module:
 
     {% if axis is defined %}
     memory = axi.AxiMultiportMemoryModel(m, 'memory', clk, rst,
-                                         datawidth=axi_datawidth,
+                                         datawidth=[{{ axis|map('last')|join(', ') }}],
                                          addrwidth=axi_addrwidth,
-                                         mem_datawidth=axi_datawidth,
-                                         mem_addrwidth=mem_addrwidth,
+                                         mem_datawidth=datawidth,
+                                         mem_addrwidth=0,
                                          memimg=memimg,
-                                         memimg_name='memory_dump',
+                                         memimg_name='memimg',
+                                         memimg_datawidth=datawidth,
                                          numports={{ axis|length }})
     {%- for axi in axis %}
-    memory.connect({{ loop.index0 }}, ports, '{{ axi }}')
+    memory.connect({{ loop.index0 }}, ports, '{{ axi|first }}')
     {%- endfor %}
     {% else %}
     memory = axi.AxiMemoryModel(m, 'memory', clk, rst,
-                                datawidth=axi_datawidth,
+                                datawidth=datawidth,
                                 addrwidth=axi_addrwidth,
-                                mem_datawidth=axi_datawidth,
-                                mem_addrwidth=mem_addrwidth,
-                                memimg=memimg, memimg_name='memory_dump')
+                                mem_datawidth=datawidth,
+                                mem_addrwidth=0,
+                                memimg=memimg,
+                                memimg_name='memimg',
+                                memimg_datawidth=datawidth)
     memory.connect(ports, 'maxi')
     {% endif %}
 

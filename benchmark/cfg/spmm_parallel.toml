@@ -1,5 +1,3 @@
-axi_datawidth = 512
-
 configs = '''
 log_parallelism = 4
 parallelism = 1 << log_parallelism

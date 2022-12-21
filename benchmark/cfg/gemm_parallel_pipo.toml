@@ -4,6 +4,13 @@ pipos = [
   { name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
 ]
 
+# [ name, datawidth ]
+axis = [
+  [ 'axi_a', 'packed_datawidth' ],
+  [ 'axi_b', 'packed_datawidth' ],
+  [ 'axi_c', 'datawidth' ],
+]
+
 comp_body = '''
 chunk_num = size_1 >> log_parallelism
 a_addr = a_offset
