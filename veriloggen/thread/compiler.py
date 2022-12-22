@@ -949,6 +949,33 @@ class CompileVisitor(ast.NodeVisitor):
         self.setFsm()
         self.incFsmCount()
 
+    def visit_AnnAssign(self, node):
+        if self.skip():
+            return
+
+        if not hasattr(node, 'value') or node.value is None:
+            raise ValueError('the right-hand side is mandatory')
+        if not node.simple:
+            raise ValueError('only pure names are supported')
+        if not isinstance(node.target, ast.Name):
+            raise ValueError('the left-hand side must be a simple identifier')
+        if (not isinstance(node.annotation, ast.Constant) or
+            not isinstance(node.annotation.value, int)):
+            raise ValueError('the annotation must be an integer constant')
+
+        width = node.annotation.value
+        if width <= 0:
+            raise ValueError('the data width must be positive')
+        right = self.visit(node.value)
+        left_name = node.target.id
+        left = self.getVariable(left_name, width=width, store=True)
+        if (isinstance(left, fxd._FixedBase) or
+            isinstance(right, fxd._FixedBase)):
+            raise ValueError('fixed-point data types are not supported')
+        self.setBind(left, right)
+        self.setFsm()
+        self.incFsmCount()
+
     def visit_IfExp(self, node):
         test = self.visit(node.test)  # if condition
         body = self.visit(node.body)

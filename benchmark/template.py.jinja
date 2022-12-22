@@ -21,8 +21,6 @@ axilite_datawidth = 32
 axilite_addrwidth = 32
 axireg_length = {{ regs|length + 3 }}
 
-counter_width = 32
-
 simulation_period = 10000000
 
 {{ configs }}
@@ -33,7 +31,7 @@ def mkdut() -> Module:
     clk = m.Input('CLK')
     rst = m.Input('RST')
 
-    counter = m.Reg('counter', counter_width, signed=False, initval=0)
+    counter = m.Reg('counter', 64, initval=0)
     seq = Seq(m, 'seq', clk, rst)
     seq(
         counter.inc()
@@ -85,7 +83,7 @@ def mkdut() -> Module:
             saxi.wait_flag(0, 1)
             saxi.write(1, 1)  # set busy
 
-            start = counter
+            start: 64 = counter
 
             {%- for reg in regs %}
             {{ reg }} = saxi.read({{ loop.index + 2 }})
@@ -93,7 +91,7 @@ def mkdut() -> Module:
 
             comp({{ regs|join(', ') }})
 
-            stop = counter
+            stop: 64 = counter
 
             time = stop - start
             saxi.write(2, time)
