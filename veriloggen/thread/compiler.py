@@ -789,37 +789,37 @@ class CompileVisitor(ast.NodeVisitor):
 
             ram_scope = copy.deepcopy(self.main_scope)
             ram_fsm = self.get_ram_fsm(ram)
+            states.append(ram_fsm.state)
+
+            # 0 represents idle
+            ram_fsm.goto_from(0, ram_fsm.current, self.main_fsm.here)
 
             stored_vars = get_vars(dma_relevant_code, 'store')
             for v in stored_vars:
                 src_v = ram_scope.searchVariable(v)
                 if src_v is not None:
                     dst_v = self.makeVariableReg(v)
-                    self.main_fsm(
+                    ram_fsm(
                         dst_v(src_v)
                     )
                     ram_scope.addVariable(v, dst_v)
-
-            states.append(ram_fsm.state)
-
-            # 0 represents idle
-            ram_fsm.goto_from(0, ram_fsm.current, self.main_fsm.here)
-
-            self.main_fsm.goto_next()
+            ram_fsm.goto_next()
 
             self.scope = ram_scope
             self.fsm = ram_fsm
             self.is_in_forked_thread = True
             visit(dma_relevant_code)
             self.is_in_forked_thread = False
-            self.scope = self.main_scope
             self.fsm = self.main_fsm
+            self.scope = self.main_scope
 
             # 0 represents idle
             ram_fsm.goto_from(ram_fsm.current, 0)
             ram_fsm.inc()
 
             forked_rams.append(ram)
+
+        self.main_fsm.goto_next()
 
         dma_irrelevant_code = extract_dma_irrelevant(node, forked_rams, self.frame_scope)
         if dma_irrelevant_code is not None:
