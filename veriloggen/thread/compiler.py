@@ -7,7 +7,7 @@ import inspect
 import textwrap
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence, Callable, Iterable
-from typing import Any, Literal, TypeVar, TypeAlias, Optional, get_origin, get_args
+from typing import Any, Literal, TypeVar, TypeAlias
 from types import FunctionType, MethodType, FrameType
 
 from veriloggen.fsm.fsm import FSM
@@ -20,7 +20,6 @@ from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
 from .ram import RAM
 from .pipo import PIPO
-from .inchworm import Inchworm
 from .stream import Stream
 
 numerical_types = vtypes.numerical_types
@@ -410,8 +409,8 @@ def replace_ram_read(node: ast.AST, scope: dict[str, Any]) -> ast.AST:
     return node
 
 
-# stream (name) -> ram (name) -> associated operations
-StrmInfoType: TypeAlias = dict[str, dict[str, set[Literal['read', 'write']]]]
+# stream -> ram -> operations
+StrmInfoType: TypeAlias = dict[str, dict[str, set[Literal['produce', 'consume']]]]
 
 
 def get_strm_info_sub(
@@ -420,28 +419,28 @@ def get_strm_info_sub(
     strms: list[str],
     rslt: StrmInfoType,
 ) -> None:
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        value = node.func.value
-        attr = node.func.attr
-        if isinstance(value, ast.Name) and value.id in strms:
-            strm = value.id
-            ram = None
-            for arg in node.args:
-                if isinstance(arg, ast.Name) and arg.id in rams:
-                    ram = arg.id
-                    break
-            if ram is not None:
-                op = None
-                if attr.startswith('set_source'):
-                    op = 'read'
-                elif attr.startswith('set_sink'):
-                    op = 'write'
-                if op is not None:
+    if (isinstance(node, ast.Call) and
+        isinstance(node.func, ast.Attribute) and
+        isinstance(node.func.value, ast.Name)):
+        inst = node.func.value.id
+        mthd = node.func.attr
+        if inst in strms:
+            strm = inst
+            op = None
+            if mthd in ['set_source_producer', 'set_sink_producer']:
+                op = 'produce'
+            elif mthd in ['set_source_consumer', 'set_sink_consumer']:
+                op = 'consume'
+            if op is not None:
+                if isinstance(node.args[1], ast.Name) and node.args[1].id in rams:
+                    ram = node.args[1].id
                     if strm not in rslt:
                         rslt[strm] = dict()
                     if ram not in rslt[strm]:
                         rslt[strm][ram] = set()
                     rslt[strm][ram].add(op)
+                else:
+                    raise ValueError
     for n in ast.iter_child_nodes(node):
         get_strm_info_sub(n, rams, strms, rslt)
 
@@ -456,8 +455,8 @@ def get_strm_info(
     return rslt
 
 
-# ram (name) -> associated operations
-RamInfoType: TypeAlias = dict[str, set[Literal['read', 'write', 'dma_read', 'dma_write']]]
+# ram -> operations
+RamInfoType: TypeAlias = dict[str, set[Literal['produce', 'consume']]]
 
 
 def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> None:
@@ -466,16 +465,18 @@ def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> 
     if (isinstance(node, ast.Call) and
         isinstance(node.func, ast.Attribute) and
         isinstance(node.func.value, ast.Name)):
-        value = node.func.value
-        attr = node.func.attr
-        if value.id in rams and attr in ['read_producer', 'write_producer', 'read_consumer', 'write_consumer']:
-            node.ram_info[value.id] = {attr.split('_')[0]}
-        if value.id in rams and attr in ['read', 'write', 'dma_read', 'dma_write']:
-            node.ram_info[value.id] = {attr}
-        if value.id in strm_info and attr in ['run', 'join']:
-            strm = value.id
-            for ram in strm_info[strm]:
-                node.ram_info[ram] = strm_info[strm][ram].copy()
+        inst = node.func.value.id
+        mthd = node.func.attr
+        if inst in rams:
+            ram = inst
+            if mthd in ['read_producer', 'write_producer', 'dma_read']:
+                node.ram_info[ram] = {'produce'}
+            elif mthd in ['read_consumer', 'write_consumer', 'dma_write']:
+                node.ram_info[ram] = {'consume'}
+        elif inst in strm_info:
+            strm = inst
+            if mthd in ['run', 'join']:
+                node.ram_info = copy.deepcopy(strm_info[strm])
     for n in ast.iter_child_nodes(node):
         append_ram_info(n, rams, strm_info)
         for ram in rams:
@@ -489,7 +490,7 @@ def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> 
 def make_call_ast(inst: str, mthd: str) -> ast.Expr:
     """ make an AST of a method call """
     node = ast.parse(f'{inst}.{mthd}()').body[0]
-    node.ram_info = dict()
+    node.ram_info: RamInfoType = dict()
     return node
 
 
@@ -509,70 +510,29 @@ def make_pop_wait(ram: str) -> list[ast.Expr]:
     return [make_call_ast(ram, 'pop'), make_call_ast(ram, 'wait_not_full')]
 
 
-CtxType: TypeAlias = Literal['neutral', 'read', 'read_write', 'dma_read', 'dma_write']
-DMAReadCtxType: TypeAlias = Literal['neutral', 'read', 'dma_read']
-DMAWriteCtxType: TypeAlias = Literal['neutral', 'read_write', 'dma_write']
+CtxType: TypeAlias = Literal['neutral', 'produce', 'consume']
 
 
-def isinstance_literal(object, classinfo):
-    if get_origin(classinfo) is not Literal:
-        raise ValueError
-    return object in get_args(classinfo)
-
-
-def insert_push_pop_dma_read(
+def insert_push_pop_seq(
     body: list[ast.stmt],
     ram: str,
-    ctx: DMAReadCtxType,
-) -> DMAReadCtxType:
-    if not isinstance_literal(ctx, DMAReadCtxType):
-        raise ValueError
+    ctx: CtxType,
+) -> CtxType:
     idx = 0
     while idx < len(body):
         if ram in body[idx].ram_info:
-            if {'read', 'dma_read'} <= body[idx].ram_info[ram]:
+            if {'produce', 'consume'} <= body[idx].ram_info[ram]:
                 ctx = insert_push_pop_sub(body[idx], ram, ctx)
-                if not isinstance_literal(ctx, DMAReadCtxType):
-                    raise RuntimeError
-            elif 'read' in body[idx].ram_info[ram]:
-                if ctx == 'dma_read':
-                    body[idx:idx] = make_push_wait(ram)
-                    idx += 2
-                ctx = 'read'
-            elif 'dma_read' in body[idx].ram_info[ram]:
-                if ctx == 'read':
+            elif 'produce' in body[idx].ram_info[ram]:
+                if ctx == 'consume':
                     body[idx:idx] = make_pop_wait(ram)
                     idx += 2
-                ctx = 'dma_read'
-        idx += 1
-    return ctx
-
-
-def insert_push_pop_dma_write(
-    body: list[ast.stmt],
-    ram: str,
-    ctx: DMAWriteCtxType,
-) -> DMAWriteCtxType:
-    if not isinstance_literal(ctx, DMAWriteCtxType):
-        raise ValueError
-    idx = 0
-    while idx < len(body):
-        if ram in body[idx].ram_info:
-            if ({'read', 'write'} & body[idx].ram_info[ram] and
-                'dma_write' in body[idx].ram_info[ram]):
-                ctx = insert_push_pop_sub(body[idx], ram, ctx)
-                if not isinstance_literal(ctx, DMAWriteCtxType):
-                    raise RuntimeError
-            elif {'read', 'write'} & body[idx].ram_info[ram]:
-                if ctx == 'dma_write':
-                    body[idx:idx] = make_pop_wait(ram)
-                    idx += 2
-                ctx = 'read_write'
-            elif 'dma_write' in body[idx].ram_info[ram]:
-                if ctx == 'read_write':
+                ctx = 'produce'
+            elif 'consume' in body[idx].ram_info[ram]:
+                if ctx == 'produce':
                     body[idx:idx] = make_push_wait(ram)
                     idx += 2
-                ctx = 'dma_write'
+                ctx = 'consume'
         idx += 1
     return ctx
 
@@ -582,74 +542,63 @@ def insert_push_pop_sub(
     ram: str,
     ctx: CtxType = 'neutral',
 ) -> CtxType:
-    if ram not in node.ram_info:
-        raise ValueError
-
-    if {'dma_read', 'dma_write'} <= node.ram_info[ram]:
-        raise ValueError
-    elif 'dma_read' in node.ram_info[ram]:
-        if 'read' not in node.ram_info[ram] or 'write' in node.ram_info[ram]:
-            raise ValueError
-        dma_kind = 'dma_read'
-    elif 'dma_write' in node.ram_info[ram]:
-        if 'write' not in node.ram_info[ram]:
-            raise ValueError
-        dma_kind = 'dma_write'
-    else:
+    if ram not in node.ram_info or not {'produce', 'consume'} <= node.ram_info[ram]:
         raise ValueError
 
     if isinstance(node, ast.FunctionDef):
         if ctx != 'neutral':
             raise ValueError
         body = node.body
-        if dma_kind == 'dma_read':
-            ctx = insert_push_pop_dma_read(body, ram, ctx)
-            if ctx == 'read':
-                body.extend(make_pop_wait(ram))
-        else:
-            ctx = insert_push_pop_dma_write(body, ram, ctx)
-            if ctx == 'dma_write':
-                body.extend(make_pop_wait(ram))
+        ctx = insert_push_pop_seq(body, ram, 'neutral')
+        if ctx == 'produce':
+            raise RuntimeError
+        if ctx == 'consume':
+            body.extend(make_pop_wait(ram))
         return 'neutral'
     elif isinstance(node, (ast.For, ast.While)):
         if node.orelse:
             raise ValueError
         body = node.body
         start_ctx = ctx
-        if dma_kind == 'dma_read':
-            ctx = insert_push_pop_dma_read(body, ram, ctx)
-            # doubtful logic
-            if ctx != start_ctx:
-                if ctx == 'read':
-                    body.extend(make_pop_wait(ram))
-                elif ctx == 'dma_read':
-                    body.extend(make_push_wait(ram))
-        else:
-            ctx = insert_push_pop_dma_write(body, ram, ctx)
-            # doubtful logic
-            if ctx != start_ctx:
-                if ctx == 'read_write':
-                    body.extend(make_push_wait(ram))
-                elif ctx == 'dma_write':
-                    body.extend(make_pop_wait(ram))
+        ctx = insert_push_pop_seq(body, ram, ctx)
+        if ctx == start_ctx:
+            return ctx
+        # doubtful logic
+        if ctx == 'produce':
+            body.extend(make_push_wait(ram))
+        elif ctx == 'consume':
+            body.extend(make_pop_wait(ram))
         return 'neutral'
     elif isinstance(node, ast.If):
-        start_ctx = ctx
-        for body in [node.body, node.orelse]:
-            if body:
-                if dma_kind == 'dma_read':
-                    ctx = insert_push_pop_dma_read(body, ram, start_ctx)
-                    if ctx == 'read':
-                        body.extend(make_pop_wait(ram))
-                    elif ctx == 'dma_read':
-                        body.extend(make_push_wait(ram))
-                else:
-                    ctx = insert_push_pop_dma_write(body, ram, start_ctx)
-                    if ctx == 'read_write':
-                        body.extend(make_push_wait(ram))
-                    elif ctx == 'dma_write':
-                        body.extend(make_pop_wait(ram))
-        return 'neutral'
+        body = node.body
+        orelse = node.orelse
+        if orelse:
+            start_ctx = ctx
+            body_ctx = insert_push_pop_seq(body, ram, start_ctx)
+            orelse_ctx = insert_push_pop_seq(orelse, ram, start_ctx)
+            if body_ctx == orelse_ctx:
+                return body_ctx
+            # doubtful logic
+            if body_ctx == 'produce':
+                body.extend(make_push_wait(ram))
+            elif body_ctx == 'consume':
+                body.extend(make_pop_wait(ram))
+            if orelse_ctx == 'produce':
+                orelse.extend(make_push_wait(ram))
+            elif orelse_ctx == 'consume':
+                orelse.extend(make_pop_wait(ram))
+            return 'neutral'
+        else:
+            start_ctx = ctx
+            body_ctx = insert_push_pop_seq(body, ram, start_ctx)
+            if body_ctx == start_ctx:
+                return body_ctx
+            # doubtful logic
+            if body_ctx == 'produce':
+                body.extend(make_push_wait(ram))
+            elif body_ctx == 'consume':
+                body.extend(make_pop_wait(ram))
+            return 'neutral'
     else:
         raise TypeError(f'unexpected node type {type(node)}')
 
@@ -659,11 +608,8 @@ def insert_push_pop(node: ast.FunctionDef, rams: list[str]) -> None:
     insert the push and pop methods in a program
     """
     for ram in rams:
-        if ram not in node.ram_info:
-            continue
-        if not {'dma_read', 'dma_write'} & node.ram_info[ram]:
-            continue
-        insert_push_pop_sub(node, ram)
+        if ram in node.ram_info and node.ram_info[ram]:
+            insert_push_pop_sub(node, ram)
 
 
 def add_producer_consumer_sub(
@@ -675,12 +621,12 @@ def add_producer_consumer_sub(
     if (isinstance(node, ast.Call) and
         isinstance(node.func, ast.Attribute) and
         isinstance(node.func.value, ast.Name)):
-        inst_name = node.func.value.id
-        method_name = node.func.attr
-        if inst_name == ram:
-            if method_name in ['read', 'write']:
+        inst = node.func.value.id
+        mthd = node.func.attr
+        if inst == ram:
+            if mthd in ['read', 'write']:
                 node.func.attr += '_' + mode
-        elif inst_name in strms and method_name in ['set_source', 'set_sink']:
+        elif inst in strms and mthd in ['set_source', 'set_sink']:
             if isinstance(node.args[1], ast.Name) and node.args[1].id == ram:
                 node.func.attr += '_' + mode
     for n in ast.iter_child_nodes(node):
@@ -795,16 +741,16 @@ class CompileVisitor(ast.NodeVisitor):
         self.frame_scope.update(self.start_frame.f_globals)
         self.frame_scope.update(self.start_frame.f_locals)
 
-        self.rams: list[str] = []
+        self.pipos: list[str] = []
         self.strms: list[str] = []
         for name, value in self.frame_scope.items():
-            if isinstance(value, (PIPO, Inchworm)):
-                self.rams.append(name)
+            if isinstance(value, PIPO):
+                self.pipos.append(name)
             if isinstance(value, Stream):
                 self.strms.append(name)
 
         self.ram_forked: dict[str, bool] = dict()
-        for ram in self.rams:
+        for ram in self.pipos:
             self.ram_forked[ram] = False
 
         self.is_in_forked_thread = False
@@ -812,7 +758,7 @@ class CompileVisitor(ast.NodeVisitor):
     def get_ram_fsm(self, name: str) -> FSM:
         if name in self.ram_fsms:
             return self.ram_fsms[name]
-        if name not in self.rams:
+        if name not in self.pipos:
             raise KeyError
         fsm = FSM(self.m, '_'.join([self.name, name, 'fsm']), self.clk, self.rst)
         self.ram_fsms[name] = fsm
@@ -827,7 +773,7 @@ class CompileVisitor(ast.NodeVisitor):
         # fork
         states: list[vtypes.Reg] = []
         forked_rams: list[str] = []
-        for ram in self.rams:
+        for ram in self.pipos:
             if self.ram_forked[ram]:
                 continue
             try:
@@ -1135,7 +1081,7 @@ class CompileVisitor(ast.NodeVisitor):
             raise NotImplementedError('for-else statement is not supported.')
 
         if not self.is_in_forked_thread:
-            for ram in self.rams:
+            for ram in self.pipos:
                 if not self.ram_forked[ram] and find_dma(node, ram):
                     self.fork_join(node, self._visit_For)
                     return
@@ -1500,13 +1446,13 @@ class CompileVisitor(ast.NodeVisitor):
         return ret
 
     def _visit_next_function(self, node: ast.FunctionDef):
-        add_producer_consumer(node, self.rams, self.strms)
-        strm_info = get_strm_info(node, self.rams, self.strms)
-        append_ram_info(node, self.rams, strm_info)
-        insert_push_pop(node, self.rams)
+        add_producer_consumer(node, self.pipos, self.strms)
+        strm_info = get_strm_info(node, self.pipos, self.strms)
+        append_ram_info(node, self.pipos, strm_info)
+        insert_push_pop(node, self.pipos)
 
         if not self.is_in_forked_thread:
-            for ram in self.rams:
+            for ram in self.pipos:
                 if not self.ram_forked[ram] and find_dma(node, ram):
                     self.fork_join(node, self.generic_visit)
                     return vtypes.Int(0)
