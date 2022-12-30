@@ -487,16 +487,25 @@ def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> 
 
 
 def make_call_ast(inst: str, mthd: str) -> ast.Expr:
+    """ make an AST of a method call """
     node = ast.parse(f'{inst}.{mthd}()').body[0]
     node.ram_info = dict()
     return node
 
 
 def make_push_wait(ram: str) -> list[ast.Expr]:
+    """
+    make the AST of the program
+    calling the push and wait_not_empty methods
+    """
     return [make_call_ast(ram, 'push'), make_call_ast(ram, 'wait_not_empty')]
 
 
 def make_pop_wait(ram: str) -> list[ast.Expr]:
+    """
+    make the AST of the program
+    calling the pop and wait_not_full methods
+    """
     return [make_call_ast(ram, 'pop'), make_call_ast(ram, 'wait_not_full')]
 
 
@@ -646,7 +655,9 @@ def insert_push_pop_sub(
 
 
 def insert_push_pop(node: ast.FunctionDef, rams: list[str]) -> None:
-    """ change a given node in place! """
+    """
+    insert the push and pop methods in a program
+    """
     for ram in rams:
         if ram not in node.ram_info:
             continue
@@ -677,7 +688,13 @@ def add_producer_consumer_sub(
 
 
 def add_producer_consumer(node: ast.AST, rams: list[str], strms: list[str]) -> None:
-    """ change a given node in place! """
+    """
+    replace methods as follows:
+        read -> read_producer or read_consumer
+        write -> write_producer or write_consumer
+        set_source -> set_source_producer or set_source_consumer
+        set_sink -> set_sink_producer or set_sink_consumer
+    """
     for ram in rams:
         methods = get_called_methods(node, ram)
         if 'dma_read' in methods and 'dma_write' in methods:
