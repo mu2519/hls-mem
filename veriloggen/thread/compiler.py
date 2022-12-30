@@ -318,9 +318,9 @@ def extract_dma_relevant(
                 method_name = r.func.attr
                 if inst_name in scope:
                     if isinstance(scope[inst_name], RAM):
-                        if method_name == 'read':
+                        if method_name in ['read', 'read_producer', 'read_consumer']:
                             called_methods = get_called_methods(node, inst_name)
-                            if called_methods.isdisjoint({'write', 'dma_read'}):
+                            if called_methods.isdisjoint({'write', 'write_producer', 'write_consumer', 'dma_read'}):
                                 continue
             raise DecouplingFailed
     return filter_stmt(node,
@@ -335,7 +335,7 @@ def find_side_effect(node: ast.AST, scope: dict[str, Any]) -> bool:
             method_name = node.func.attr
             if inst_name in scope:
                 if isinstance(scope[inst_name], RAM):
-                    if method_name == 'read':
+                    if method_name in ['read', 'read_producer', 'read_consumer']:
                         return False
         return True
     return any(map(partial(find_side_effect, scope=scope), ast.iter_child_nodes(node)))
@@ -348,7 +348,7 @@ def get_side_effect_vars(node: ast.AST, scope: dict[str, Any]) -> set[str]:
             method_name = node.func.attr
             if inst_name in scope:
                 if isinstance(scope[inst_name], RAM):
-                    if method_name == 'read':
+                    if method_name in ['read', 'read_producer', 'read_consumer']:
                         return set()
         return get_vars(node.args) | get_vars([kw.value for kw in node.keywords])
     return fold_map_set(partial(get_side_effect_vars, scope=scope), ast.iter_child_nodes(node))
@@ -468,6 +468,8 @@ def append_ram_info(node: ast.AST, rams: list[str], strm_info: StrmInfoType) -> 
         isinstance(node.func.value, ast.Name)):
         value = node.func.value
         attr = node.func.attr
+        if value.id in rams and attr in ['read_producer', 'write_producer', 'read_consumer', 'write_consumer']:
+            node.ram_info[value.id] = {attr.split('_')[0]}
         if value.id in rams and attr in ['read', 'write', 'dma_read', 'dma_write']:
             node.ram_info[value.id] = {attr}
         if value.id in strm_info and attr in ['run', 'join']:
@@ -651,6 +653,42 @@ def insert_push_pop(node: ast.FunctionDef, rams: list[str]) -> None:
         if not {'dma_read', 'dma_write'} & node.ram_info[ram]:
             continue
         insert_push_pop_sub(node, ram)
+
+
+def add_producer_consumer_sub(
+    node: ast.AST,
+    ram: str,
+    strms: list[str],
+    mode: Literal['producer', 'consumer'],
+) -> None:
+    if (isinstance(node, ast.Call) and
+        isinstance(node.func, ast.Attribute) and
+        isinstance(node.func.value, ast.Name)):
+        inst_name = node.func.value.id
+        method_name = node.func.attr
+        if inst_name == ram:
+            if method_name in ['read', 'write']:
+                node.func.attr += '_' + mode
+        elif inst_name in strms and method_name in ['set_source', 'set_sink']:
+            if isinstance(node.args[1], ast.Name) and node.args[1].id == ram:
+                node.func.attr += '_' + mode
+    for n in ast.iter_child_nodes(node):
+        add_producer_consumer_sub(n, ram, strms, mode)
+
+
+def add_producer_consumer(node: ast.AST, rams: list[str], strms: list[str]) -> None:
+    """ change a given node in place! """
+    for ram in rams:
+        methods = get_called_methods(node, ram)
+        if 'dma_read' in methods and 'dma_write' in methods:
+            raise ValueError
+        elif 'dma_read' in methods:
+            mode = 'consumer'
+        elif 'dma_write' in methods:
+            mode = 'producer'
+        else:
+            continue
+        add_producer_consumer_sub(node, ram, strms, mode)
 
 
 def _tmp_name(prefix='_tmp_thread'):
@@ -1445,6 +1483,7 @@ class CompileVisitor(ast.NodeVisitor):
         return ret
 
     def _visit_next_function(self, node: ast.FunctionDef):
+        add_producer_consumer(node, self.rams, self.strms)
         strm_info = get_strm_info(node, self.rams, self.strms)
         append_ram_info(node, self.rams, strm_info)
         insert_push_pop(node, self.rams)

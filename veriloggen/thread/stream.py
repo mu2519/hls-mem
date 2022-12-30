@@ -1,6 +1,7 @@
 import math
 import functools
 from collections import OrderedDict
+from typing import Literal, Optional
 
 import veriloggen.core.module as module
 import veriloggen.core.vtypes as vtypes
@@ -17,6 +18,7 @@ from veriloggen.stream.stypes import _and_vars
 from . import compiler
 from .ram import RAM
 from .fifo import FIFO
+from .pipo import PIPO
 from .inchworm import Inchworm
 
 
@@ -70,6 +72,10 @@ class Stream(BaseStream):
                       'set_sink_immediate',
                       'set_sink_empty',
                       'set_sink_inchworm',
+                      'set_source_producer',
+                      'set_source_consumer',
+                      'set_sink_producer',
+                      'set_sink_consumer',
                       'set_parameter',
                       'set_read_RAM', 'set_write_RAM', 'set_read_modify_write_RAM',
                       'set_read_fifo', 'set_write_fifo',
@@ -730,12 +736,24 @@ class Stream(BaseStream):
 
         return var
 
-    def set_source(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
+    def set_source_producer(self, fsm: FSM, name: vtypes.StrLike,
+                            ram: PIPO, offset, size, stride=1, port=0):
+        self.set_source(fsm, name, ram, offset, size, stride, port, mode='producer')
+
+    def set_source_consumer(self, fsm: FSM, name: vtypes.StrLike,
+                            ram: PIPO, offset, size, stride=1, port=0):
+        self.set_source(fsm, name, ram, offset, size, stride, port, mode='consumer')
+
+    def set_source(self, fsm: FSM, name: vtypes.StrLike,
+                   ram: RAM, offset, size, stride=1, port=0,
+                   mode: Optional[Literal['producer', 'consumer']] = None):
         """ intrinsic method to assign RAM property to a source stream """
-        self._set_source(fsm, name, ram, offset, size, stride, port)
+        self._set_source(fsm, name, ram, offset, size, stride, port, mode)
         fsm.goto_next()
 
-    def _set_source(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
+    def _set_source(self, fsm: FSM, name: vtypes.StrLike,
+                    ram: RAM, offset, size, stride=1, port=0,
+                    mode: Optional[Literal['producer', 'consumer']] = None):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -765,7 +783,7 @@ class Stream(BaseStream):
         )
 
         port = vtypes.to_int(port)
-        self._setup_source_ram(ram, var, port, set_cond)
+        self._setup_source_ram(ram, var, port, set_cond, mode)
         self._synthesize_set_source(var, name)
 
     def set_source_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
@@ -1090,12 +1108,24 @@ class Stream(BaseStream):
         self._setup_source_inchworm(inchworm, var, set_cond, release)
         self._synthesize_set_source_inchworm(var, name)
 
-    def set_sink(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
+    def set_sink_producer(self, fsm: FSM, name: vtypes.StrLike,
+                          ram: PIPO, offset, size, stride=1, port=0):
+        self.set_sink(fsm, name, ram, offset, size, stride, port, mode='producer')
+
+    def set_sink_consumer(self, fsm: FSM, name: vtypes.StrLike,
+                          ram: PIPO, offset, size, stride=1, port=0):
+        self.set_sink(fsm, name, ram, offset, size, stride, port, mode='consumer')
+
+    def set_sink(self, fsm: FSM, name: vtypes.StrLike,
+                 ram: RAM, offset, size, stride=1, port=0,
+                 mode: Optional[Literal['producer', 'consumer']] = None):
         """ intrinsic method to assign RAM property to a sink stream """
-        self._set_sink(fsm, name, ram, offset, size, stride, port)
+        self._set_sink(fsm, name, ram, offset, size, stride, port, mode)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink(self, fsm: FSM, name: vtypes.StrLike, ram: RAM, offset, size, stride=1, port=0):
+    def _set_sink(self, fsm: FSM, name: vtypes.StrLike,
+                  ram: RAM, offset, size, stride=1, port=0,
+                  mode: Optional[Literal['producer', 'consumer']] = None):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1129,7 +1159,7 @@ class Stream(BaseStream):
         )
 
         port = vtypes.to_int(port)
-        self._setup_sink_ram(ram, var, port, set_cond)
+        self._setup_sink_ram(ram, var, port, set_cond, mode)
         self._synthesize_set_sink(var, name)
 
     def set_sink_pattern(self, fsm: FSM, name, ram, offset, pattern, port=0):
@@ -2017,7 +2047,8 @@ class Stream(BaseStream):
         start_value = self.seq.Prev(v, 1, cond=self.oready)
         return start_value
 
-    def _setup_source_ram(self, ram: RAM, var: stypes._Variable, port: int, set_cond: vtypes.Wire):
+    def _setup_source_ram(self, ram: RAM, var: stypes._Variable, port: int, set_cond: vtypes.Wire,
+                          mode: Optional[Literal['producer', 'consumer']] = None):
         if ram._id() in var.source_id_map:
             ram_id = var.source_id_map[ram._id()]
             self.seq.If(set_cond)(
@@ -2042,7 +2073,12 @@ class Stream(BaseStream):
         ram_cond = (var.source_sel == ram_id)
         renable = vtypes.Ands(self.oready, var.source_ram_renable, ram_cond)
 
-        d, _ = ram.read_rtl(var.source_ram_raddr, port=port, cond=renable)
+        if mode is None:
+            read_method_name = 'read_rtl'
+        else:
+            read_method_name = '_'.join(['read', mode, 'rtl'])
+        read_method = getattr(ram, read_method_name)
+        d, _ = read_method(var.source_ram_raddr, port=port, cond=renable)
 
         d_out = d
         util.add_mux(var.source_ram_rdata, ram_cond, d_out)
@@ -2836,7 +2872,8 @@ class Stream(BaseStream):
         )
         var.source_fsm.If(self.source_stop, self.oready).goto_init()
 
-    def _setup_sink_ram(self, ram: RAM, var: stypes._Numeric, port: int, set_cond: vtypes.Reg):
+    def _setup_sink_ram(self, ram: RAM, var: stypes._Numeric, port: int, set_cond: vtypes.Reg,
+                        mode: Optional[Literal['producer', 'consumer']] = None):
         if ram._id() in var.sink_id_map:
             ram_id = var.sink_id_map[ram._id()]
             self.seq.If(set_cond)(
@@ -2860,8 +2897,13 @@ class Stream(BaseStream):
         # write data
         ram_cond = (var.sink_sel == ram_id)
         wenable = vtypes.Ands(self.oready, var.sink_ram_wenable, ram_cond)
-        ram.write_rtl(var.sink_ram_waddr, var.sink_ram_wdata,
-                      port=port, cond=wenable)
+
+        if mode is None:
+            write_method_name = 'write_rtl'
+        else:
+            write_method_name = '_'.join(['write', mode, 'rtl'])
+        write_method = getattr(ram, write_method_name)
+        write_method(var.sink_ram_waddr, var.sink_ram_wdata, port=port, cond=wenable)
 
         if (self.dump and
             (self.dump_mode == 'all' or

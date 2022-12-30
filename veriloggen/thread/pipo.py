@@ -2,6 +2,7 @@ from veriloggen.core import vtypes
 from veriloggen.core.module import Module
 from veriloggen.seq.seq import Seq, make_condition
 from veriloggen.fsm.fsm import FSM
+from .ttypes import _MutexFunction
 from .ram import RAM
 from .axim import AXIM
 
@@ -19,7 +20,9 @@ class PIPO(RAM):
         'push', 'pop',
         'wait_not_empty', 'wait_not_full',
         'dma_read', 'dma_write',
-    ) + RAM.__intrinsics__
+        'read_producer', 'write_producer',
+        'read_consumer', 'write_consumer',
+    ) + _MutexFunction.__intrinsics__
 
     def __init__(
         self,
@@ -66,7 +69,7 @@ class PIPO(RAM):
 
         self.mutex = None
 
-    def _read_rtl(self, addr, port, cond, ptr) -> tuple[vtypes.Wire, vtypes.Wire]:
+    def _read_rtl(self, addr, port: int, cond, ptr) -> tuple[vtypes.Wire, vtypes.Wire]:
         data_list = []
         valid_list = []
         for i in range(self.length):
@@ -86,21 +89,54 @@ class PIPO(RAM):
 
         return data_wire, valid_wire
 
-    def read_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
-        return self._read_rtl(addr, port, cond, self.head)
-
-    def read_burst_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
-        return self._read_rtl(addr, port, cond, self.head)
-
-    def _write_rtl(self, addr, data, port, cond, ptr):
+    def _write_rtl(self, addr, data, port: int, cond, ptr):
         for i in range(self.length):
             self.rams[i].write_rtl(addr, data, port, vtypes.Ands(cond, ptr == i))
 
-    def write_rtl(self, addr, data, port=0, cond=None):
+    def read_producer_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
+        return self._read_rtl(addr, port, cond, self.tail)
+
+    def write_producer_rtl(self, addr, data, port=0, cond=None):
         self._write_rtl(addr, data, port, cond, self.tail)
 
+    def read_consumer_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
+        return self._read_rtl(addr, port, cond, self.head)
+
+    def write_consumer_rtl(self, addr, data, port=0, cond=None):
+        self._write_rtl(addr, data, port, cond, self.head)
+
+    def read_burst_rtl(self, addr, port=0, cond=None) -> tuple[vtypes.Wire, vtypes.Wire]:
+        return self.read_consumer_rtl(addr, port, cond)
+
     def write_burst_rtl(self, addr, data, port=0, cond=None):
-        self._write_rtl(addr, data, port, cond, self.tail)
+        self.write_producer_rtl(addr, data, port, cond)
+
+    def _read(self, fsm: FSM, addr, port, ptr) -> vtypes.Reg:
+        port = vtypes.to_int(port)
+        data, valid = self._read_rtl(addr, port, fsm.here, ptr)
+        data_reg = self.m.TmpReg(self.datawidth, prefix='read_data')
+        fsm.If(valid)(
+            data_reg(data)
+        )
+        fsm.If(valid).goto_next()
+        return data_reg
+
+    def _write(self, fsm: FSM, addr, data, port, ptr):
+        port = vtypes.to_int(port)
+        self._write_rtl(addr, data, port, fsm.here, ptr)
+        fsm.goto_next()
+
+    def read_producer(self, fsm: FSM, addr, port=0) -> vtypes.Reg:
+        return self._read(fsm, addr, port, self.tail)
+
+    def write_producer(self, fsm: FSM, addr, data, port=0):
+        self._write(fsm, addr, data, port, self.tail)
+
+    def read_consumer(self, fsm: FSM, addr, port=0) -> vtypes.Reg:
+        return self._read(fsm, addr, port, self.head)
+
+    def write_consumer(self, fsm: FSM, addr, data, port=0):
+        self._write(fsm, addr, data, port, self.head)
 
     def push(self, fsm: FSM):
         self.seq.If(fsm.here)(
@@ -151,3 +187,18 @@ class PIPO(RAM):
 
     def __getitem__(self, key):
         raise TypeError('no longer subscriptable')
+
+    def read(self, *args, **kwargs):
+        raise TypeError('`read` method is no longer provided')
+
+    def write(self, *args, **kwargs):
+        raise TypeError('`write` method is no longer provided')
+
+    def read_rtl(self, *args, **kwargs):
+        raise TypeError('`read_rtl` method is no longer provided')
+
+    def write_rtl(self, *args, **kwargs):
+        raise TypeError('`write_rtl` method is no longer provided')
+
+    def read_low_priority(self, *args, **kwargs):
+        raise TypeError('`read_low_priority` method is no longer provided')
