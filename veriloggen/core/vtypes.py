@@ -2359,6 +2359,14 @@ class EmbeddedNumeric(EmbeddedCode, _Numeric):
         EmbeddedCode.__init__(self, code)
 
 
+def Max(a, b):
+    return Mux(a > b, a, b)
+
+
+def Min(a, b):
+    return Mux(a < b, a, b)
+
+
 numerical_types = (_Numeric, int, bool, float, str)
 
 StrLike: TypeAlias = str | Str

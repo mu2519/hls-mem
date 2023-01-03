@@ -1,9 +1,9 @@
 rams = [
-  { name = 'ram_a_row', datawidth = 'datawidth', addrwidth = 10 },
-  { name = 'ram_a_col', datawidth = 'datawidth', addrwidth = 10 },
-  { name = 'ram_a_val', datawidth = 'datawidth', addrwidth = 10 },
-  { name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 10 },
-  { name = 'ram_c', datawidth = 'packed_datawidth', addrwidth = 10, numports = 2 },
+  { type = 'RAM', name = 'ram_a_row', datawidth = 'datawidth', addrwidth = 10 },
+  { type = 'RAM', name = 'ram_a_col', datawidth = 'datawidth', addrwidth = 10 },
+  { type = 'RAM', name = 'ram_a_val', datawidth = 'datawidth', addrwidth = 10 },
+  { type = 'RAM', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 10 },
+  { type = 'RAM', name = 'ram_c', datawidth = 'packed_datawidth', addrwidth = 10, numports = 2 },
 ]
 
 # [ name, datawidth ]

@@ -11,6 +11,7 @@ from .ram import *
 from .fifo import *
 from .pipo import PIPO
 from .inchworm import Inchworm
+from .buffet import BuffetBase, BuffetRead, BuffetWrite
 from .axi import *
 from .util import __intrinsics__ as __util_intrinsics__
 from .util import *

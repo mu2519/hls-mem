@@ -1,7 +1,7 @@
-pipos = [
-  { name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = 10 },
-  { name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 10 },
-  { name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
+rams = [
+  { type = 'PIPO', name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = '10 - log_parallelism' },
+  { type = 'PIPO', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = '10 - log_parallelism' },
+  { type = 'PIPO', name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
 ]
 
 # [ name, datawidth ]

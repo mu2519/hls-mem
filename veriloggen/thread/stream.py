@@ -64,6 +64,7 @@ class Stream(BaseStream):
                       'set_source_fifo',
                       'set_source_empty',
                       'set_source_inchworm',
+                      'set_source_buffet',
                       'set_sink',
                       'set_sink_pattern', 'set_sink_multidim',
                       'set_sink_multipattern',
@@ -72,6 +73,7 @@ class Stream(BaseStream):
                       'set_sink_immediate',
                       'set_sink_empty',
                       'set_sink_inchworm',
+                      'set_sink_buffet',
                       'set_source_producer',
                       'set_source_consumer',
                       'set_sink_producer',
@@ -1079,11 +1081,11 @@ class Stream(BaseStream):
 
         var.has_source_empty = True
 
-    def set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
-        self._set_source_inchworm(fsm, name, inchworm, size, release)
+    def set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, offset, size, release=False):
+        self._set_source_inchworm(fsm, name, inchworm, offset, size, release)
         fsm.goto_next()
 
-    def _set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
+    def _set_source_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, offset, size, release=False):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1102,11 +1104,15 @@ class Stream(BaseStream):
 
         self.seq.If(set_cond)(
             var.source_mode(mode_inchworm),
+            var.source_offset(offset),
             var.source_size(size)
         )
 
         self._setup_source_inchworm(inchworm, var, set_cond, release)
         self._synthesize_set_source_inchworm(var, name)
+
+    def set_source_buffet(self, *args, **kwargs):
+        self.set_source_inchworm(*args, **kwargs)
 
     def set_sink_producer(self, fsm: FSM, name: vtypes.StrLike,
                           ram: PIPO, offset, size, stride=1, port=0):
@@ -1500,11 +1506,11 @@ class Stream(BaseStream):
             ram_sel(0)  # '0' is reserved for empty
         )
 
-    def set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
-        self._set_sink_inchworm(fsm, name, inchworm, size, release)
+    def set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, offset, size, release=False):
+        self._set_sink_inchworm(fsm, name, inchworm, offset, size, release)
         fsm.If(self.oready).goto_next()
 
-    def _set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, size, release=False):
+    def _set_sink_inchworm(self, fsm: FSM, name: vtypes.StrLike, inchworm: Inchworm, offset, size, release=False):
         if not self.stream_synthesized:
             self._implement_stream()
 
@@ -1521,15 +1527,20 @@ class Stream(BaseStream):
 
         set_cond_base = self._set_flag(fsm)
         set_cond = self._delay_from_start_to_sink(set_cond_base)
+        sink_offset = self._delay_from_start_to_sink(offset)
         sink_size = self._delay_from_start_to_sink(size)
 
         self.seq.If(set_cond)(
             var.sink_mode(mode_inchworm),
+            var.sink_offset(sink_offset),
             var.sink_size(sink_size)
         )
 
         self._setup_sink_inchworm(inchworm, var, set_cond, release)
         self._synthesize_set_sink_inchworm(var, name)
+
+    def set_sink_buffet(self, *args, **kwargs):
+        self.set_sink_inchworm(*args, **kwargs)
 
     def set_parameter(self, fsm: FSM, name, value, raw=False):
         """ intrinsic method to assign parameter value to a parameter stream """
@@ -2819,7 +2830,7 @@ class Stream(BaseStream):
         util.add_disable_cond(self.oready, cond, inchworm_oready)
 
         # release control
-        inchworm._release(release, inchworm_cond, var.source_inchworm_release)
+        inchworm.release_rtl(release, inchworm_cond, var.source_inchworm_release)
 
     def _synthesize_set_source_inchworm(self, var: stypes._Variable, name: str):
         if var.source_fsm is not None:
@@ -2829,6 +2840,7 @@ class Stream(BaseStream):
 
         self.seq.If(source_start, self.oready)(
             var.source_idle(0),
+            var.source_offset_buf(var.source_offset),
             var.source_size_buf(var.source_size)
         )
 
@@ -2846,7 +2858,7 @@ class Stream(BaseStream):
         var.source_fsm.If(source_start, self.oready).goto_next()
 
         self.seq.If(var.source_fsm.here, self.oready)(
-            var.source_inchworm_raddr(0),
+            var.source_inchworm_raddr(var.source_offset_buf),
             var.source_inchworm_renable(1),
             var.source_count(var.source_size_buf)
         )
@@ -3610,7 +3622,7 @@ class Stream(BaseStream):
         util.add_disable_cond(self.oready, cond, var.sink_inchworm_waddr + 1 < inchworm.limit)
 
         # release control
-        inchworm._release(release, inchworm_cond, var.sink_inchworm_release)
+        inchworm.release_rtl(release, inchworm_cond, var.sink_inchworm_release)
 
     def _synthesize_set_sink_inchworm(self, var: stypes._Numeric, name: str):
         if var.sink_fsm is not None:
@@ -3619,6 +3631,7 @@ class Stream(BaseStream):
         sink_start = vtypes.Land(self.sink_start, vtypes.And(var.sink_mode, mode_inchworm))
 
         self.seq.If(sink_start, self.oready)(
+            var.sink_offset_buf(var.sink_offset),
             var.sink_size_buf(var.sink_size)
         )
 
@@ -3633,7 +3646,7 @@ class Stream(BaseStream):
         var.sink_fsm.If(sink_start, self.oready).goto_next()
 
         self.seq.If(var.sink_fsm.here, self.oready)(
-            var.sink_inchworm_waddr(-1),
+            var.sink_inchworm_waddr(var.sink_offset_buf - 1),
             var.sink_count(var.sink_size_buf),
             var.sink_inchworm_flag(1)
         )

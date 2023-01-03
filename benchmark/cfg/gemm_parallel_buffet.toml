@@ -1,0 +1,35 @@
+rams = [
+  { type = 'BuffetRead', name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = '10 - log_parallelism' },
+  { type = 'BuffetRead', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = '10 - log_parallelism' },
+  { type = 'BuffetWrite', name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
+]
+
+# [ name, datawidth ]
+axis = [
+  [ 'axi_a', 'packed_datawidth' ],
+  [ 'axi_b', 'packed_datawidth' ],
+  [ 'axi_c', 'datawidth' ],
+]
+
+comp_body = '''
+chunk_num = size_1 >> log_parallelism
+a_addr = a_offset
+c_addr = c_offset
+for i in range(size_0):
+    ram_a.dma_read(axi_a, a_addr, chunk_num, chunk_num >> 1)
+    b_addr = b_offset
+    for j in range(size_2):
+        ram_b.dma_read(axi_b, b_addr, chunk_num, chunk_num >> 1)
+        strm.set_parameter('size', chunk_num)
+        strm.set_source_buffet('a', ram_a, 0, chunk_num, release=(j == size_2 - 1))
+        strm.set_source_buffet('b', ram_b, 0, chunk_num, release=True)
+        strm.set_sink_buffet('c', ram_c, j, 1, release=True)
+        strm.run()
+        strm.join()
+        ram_b.rebase()
+        b_addr += size_1 * (datawidth // 8)
+    ram_a.rebase()
+    ram_c.rebase()
+    ram_c.dma_write(axi_c, c_addr, size_2, size_2 >> 1)
+    a_addr += size_1 * (datawidth // 8)
+    c_addr += size_2 * (datawidth // 8)'''

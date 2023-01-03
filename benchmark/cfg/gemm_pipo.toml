@@ -1,8 +1,7 @@
-# [ name, addrwidth ]
-pipos = [
-  [ 'ram_a', 10 ],
-  [ 'ram_b', 10 ],
-  [ 'ram_c', 10 ],
+rams = [
+  { type = 'PIPO', name = 'ram_a', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_b', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_c', addrwidth = 10 },
 ]
 
 # [ name, datawidth ]

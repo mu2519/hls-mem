@@ -1,0 +1,25 @@
+comp_body = '''
+a_addr = a_offset
+c_addr = c_offset
+for i in range(size_0):
+    ram_a.dma_read(axi_a, a_addr, size_1, size_1 >> 1)
+    b_addr = b_offset
+    for j in range(size_2):
+        ram_b.dma_read(axi_b, b_addr, size_1, size_1 >> 1)
+        sum = 0
+        for k in range(size_1):
+            x = ram_a.read(k)
+            y = ram_b.read(k)
+            if j == size_2 - 1:
+                ram_a.release()
+            ram_b.release()
+            sum += x * y
+        ram_b.rebase()
+        ram_c.write(j, sum)
+        ram_c.release()
+        b_addr += size_1 * (datawidth // 8)
+    ram_a.rebase()
+    ram_c.rebase()
+    ram_c.dma_write(axi_c, c_addr, size_2, size_2 >> 1)
+    a_addr += size_1 * (datawidth // 8)
+    c_addr += size_2 * (datawidth // 8)'''

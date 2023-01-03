@@ -1,0 +1,11 @@
+rams = [
+  { type = 'BuffetRead', name = 'ram_a', addrwidth = 10 },
+  { type = 'BuffetRead', name = 'ram_b', addrwidth = 10 },
+  { type = 'BuffetWrite', name = 'ram_c', addrwidth = 10 },
+]
+
+axis = [
+  [ 'axi_a', 'datawidth' ],
+  [ 'axi_b', 'datawidth' ],
+  [ 'axi_c', 'datawidth' ],
+]

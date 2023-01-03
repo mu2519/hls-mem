@@ -1,14 +1,9 @@
-# [ name, addrwidth ]
 rams = [
-  [ 'ram_a_row', 10 ],
-]
-
-# [ name, addrwidth, numports ]
-pipos = [
-  [ 'ram_a_col', 10 ],
-  [ 'ram_a_val', 10 ],
-  [ 'ram_b', 10 ],
-  [ 'ram_c', 10, 2 ],
+  { type = 'RAM', name = 'ram_a_row', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_a_col', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_a_val', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_b', addrwidth = 10 },
+  { type = 'PIPO', name = 'ram_c', addrwidth = 10, numports = 2 },
 ]
 
 # [ name, datawidth ]

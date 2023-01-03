@@ -37,29 +37,13 @@ def mkdut() -> Module:
         counter.inc()
     )
 
-    {%- if ram_defs is defined %}
-    {{ ram_defs|indent(4) }}
-    {%- endif %}
-
-    {% if rams is defined %}
     {%- for ram in rams %}
-    {%- if ram is mapping %}
-    {{ ram['name'] }} = vthread.RAM(m, '{{ ram['name'] }}', clk, rst, datawidth={{ ram['datawidth'] }}, addrwidth={{ ram['addrwidth'] }}, numports={{ ram['numports']|default(1) }})
+    {%- if ram['numports'] is defined %}
+    {{ ram['name'] }} = vthread.{{ ram['type'] }}(m, '{{ ram['name'] }}', clk, rst, {{ ram['datawidth']|default('datawidth') }}, {{ ram['addrwidth'] }}, numports={{ ram['numports'] }})
     {%- else %}
-    {{ ram[0] }} = vthread.RAM(m, '{{ ram[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ ram[1] }}, numports={{ ram[2]|default(1) }})
+    {{ ram['name'] }} = vthread.{{ ram['type'] }}(m, '{{ ram['name'] }}', clk, rst, {{ ram['datawidth']|default('datawidth') }}, {{ ram['addrwidth'] }})
     {%- endif %}
     {%- endfor %}
-    {% endif %}
-
-    {% if pipos is defined %}
-    {%- for pipo in pipos %}
-    {%- if pipo is mapping %}
-    {{ pipo['name'] }} = vthread.PIPO(m, '{{ pipo['name'] }}', clk, rst, datawidth={{ pipo['datawidth'] }}, addrwidth={{ pipo['addrwidth'] }}, numports={{ pipo['numports']|default(1) }})
-    {%- else %}
-    {{ pipo[0] }} = vthread.PIPO(m, '{{ pipo[0] }}', clk, rst, datawidth=datawidth, addrwidth={{ pipo[1] }}, numports={{ pipo[2]|default(1) }})
-    {%- endif %}
-    {%- endfor %}
-    {% endif %}
 
     {%- if strm_defs is defined %}
     {{ strm_defs|indent(4) }}

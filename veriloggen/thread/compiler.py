@@ -20,6 +20,8 @@ from .operator import getVeriloggenOp, getMethodName, applyMethod
 from .fixed import FixedConst
 from .ram import RAM
 from .pipo import PIPO
+from .inchworm import Inchworm
+from .buffet import BuffetBase
 from .stream import Stream
 
 numerical_types = vtypes.numerical_types
@@ -316,10 +318,17 @@ def extract_dma_relevant(
                 inst_name = r.func.value.id
                 method_name = r.func.attr
                 if inst_name in scope:
-                    if isinstance(scope[inst_name], RAM):
-                        if method_name in ['read', 'read_producer', 'read_consumer']:
+                    if isinstance(scope[inst_name], PIPO):
+                        if method_name in ['read_producer', 'read_consumer']:
                             called_methods = get_called_methods(node, inst_name)
-                            if called_methods.isdisjoint({'write', 'write_producer', 'write_consumer', 'dma_read'}):
+                            if called_methods.isdisjoint(
+                                {'write_producer', 'write_consumer', 'dma_read'}
+                            ):
+                                continue
+                    elif isinstance(scope[inst_name], (RAM, Inchworm, BuffetBase)):
+                        if method_name == 'read':
+                            called_methods = get_called_methods(node, inst_name)
+                            if called_methods.isdisjoint({'write', 'dma_read'}):
                                 continue
             raise DecouplingFailed
     return filter_stmt(node,
@@ -333,9 +342,12 @@ def find_side_effect(node: ast.AST, scope: dict[str, Any]) -> bool:
             inst_name = node.func.value.id
             method_name = node.func.attr
             if inst_name in scope:
-                if isinstance(scope[inst_name], RAM):
-                    if method_name in ['read', 'read_producer', 'read_consumer']:
-                        return False
+                if (isinstance(scope[inst_name], PIPO) and
+                    method_name in ['read_producer', 'read_consumer']):
+                    return False
+                elif (isinstance(scope[inst_name], (RAM, Inchworm, BuffetBase)) and
+                      method_name == 'read'):
+                    return False
         return True
     return any(map(partial(find_side_effect, scope=scope), ast.iter_child_nodes(node)))
 
@@ -346,9 +358,12 @@ def get_side_effect_vars(node: ast.AST, scope: dict[str, Any]) -> set[str]:
             inst_name = node.func.value.id
             method_name = node.func.attr
             if inst_name in scope:
-                if isinstance(scope[inst_name], RAM):
-                    if method_name in ['read', 'read_producer', 'read_consumer']:
-                        return set()
+                if (isinstance(scope[inst_name], PIPO) and
+                    method_name in ['read_producer', 'read_consumer']):
+                    return set()
+                elif (isinstance(scope[inst_name], (RAM, Inchworm, BuffetBase)) and
+                      method_name == 'read'):
+                    return set()
         return get_vars(node.args) | get_vars([kw.value for kw in node.keywords])
     return fold_map_set(partial(get_side_effect_vars, scope=scope), ast.iter_child_nodes(node))
 
@@ -741,24 +756,24 @@ class CompileVisitor(ast.NodeVisitor):
         self.frame_scope.update(self.start_frame.f_globals)
         self.frame_scope.update(self.start_frame.f_locals)
 
+        self.eddo_rams: list[str] = []
         self.pipos: list[str] = []
         self.strms: list[str] = []
         for name, value in self.frame_scope.items():
+            if isinstance(value, (PIPO, Inchworm, BuffetBase)):
+                self.eddo_rams.append(name)
             if isinstance(value, PIPO):
                 self.pipos.append(name)
             if isinstance(value, Stream):
                 self.strms.append(name)
 
-        self.ram_forked: dict[str, bool] = dict()
-        for ram in self.pipos:
-            self.ram_forked[ram] = False
-
         self.is_in_forked_thread = False
+        self.ram_forked: defaultdict[str, bool] = defaultdict(bool)
 
     def get_ram_fsm(self, name: str) -> FSM:
         if name in self.ram_fsms:
             return self.ram_fsms[name]
-        if name not in self.pipos:
+        if name not in self.eddo_rams:
             raise KeyError
         fsm = FSM(self.m, '_'.join([self.name, name, 'fsm']), self.clk, self.rst)
         self.ram_fsms[name] = fsm
@@ -773,7 +788,7 @@ class CompileVisitor(ast.NodeVisitor):
         # fork
         states: list[vtypes.Reg] = []
         forked_rams: list[str] = []
-        for ram in self.pipos:
+        for ram in self.eddo_rams:
             if self.ram_forked[ram]:
                 continue
             try:
@@ -1081,7 +1096,7 @@ class CompileVisitor(ast.NodeVisitor):
             raise NotImplementedError('for-else statement is not supported.')
 
         if not self.is_in_forked_thread:
-            for ram in self.pipos:
+            for ram in self.eddo_rams:
                 if not self.ram_forked[ram] and find_dma(node, ram):
                     self.fork_join(node, self._visit_For)
                     return
@@ -1452,7 +1467,7 @@ class CompileVisitor(ast.NodeVisitor):
         insert_push_pop(node, self.pipos)
 
         if not self.is_in_forked_thread:
-            for ram in self.pipos:
+            for ram in self.eddo_rams:
                 if not self.ram_forked[ram] and find_dma(node, ram):
                     self.fork_join(node, self.generic_visit)
                     return vtypes.Int(0)

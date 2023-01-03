@@ -5,6 +5,9 @@ gemm_parallel_ram = [ 'gemm', 'gemm_parallel', 'gemm_parallel_ram' ]
 gemm_thread_pipo = [ 'gemm', 'gemm_pipo', 'gemm_thread_pipo' ]
 gemm_stream_pipo = [ 'gemm', 'gemm_pipo', 'gemm_stream', 'gemm_stream_pipo' ]
 gemm_parallel_pipo = [ 'gemm', 'gemm_parallel', 'gemm_parallel_pipo' ]
+gemm_thread_buffet = [ 'gemm', 'gemm_buffet', 'gemm_thread_buffet' ]
+gemm_stream_buffet = [ 'gemm', 'gemm_buffet', 'gemm_stream', 'gemm_stream_buffet' ]
+gemm_parallel_buffet = [ 'gemm', 'gemm_parallel', 'gemm_parallel_buffet' ]
 
 # SpMM
 spmm_thread_ram = [ 'spmm', 'spmm_ram', 'spmm_thread_ram' ]

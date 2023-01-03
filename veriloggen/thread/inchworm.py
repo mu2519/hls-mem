@@ -191,10 +191,10 @@ class Inchworm:
         return rdata_wire, rvalid, rlast
 
     def release(self, fsm: FSM) -> None:
-        self._release(fsm.here)
+        self.release_rtl(fsm.here)
         fsm.goto_next()
 
-    def _release(self, *cond) -> None:
+    def release_rtl(self, *cond) -> None:
         if self.mode == 'ro':
             self.seq.If(cond)(
                 self.front.inc()
