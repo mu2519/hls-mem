@@ -6,9 +6,10 @@ arrs = [
   [ 'c_ref', 'c_ref_offset' ],
 ]
 
-datawidth = 32
-
 configs = '''
+log_word = 2
+datawidth = (1 << log_word) * 8
+
 rand_range = (-16, 16)
 
 size_0 = 32

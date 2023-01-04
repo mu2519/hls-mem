@@ -24,6 +24,8 @@ from .inchworm import Inchworm
 from .buffet import BuffetBase
 from .stream import Stream
 
+from veriloggen.types.mul import Multiplier
+
 numerical_types = vtypes.numerical_types
 
 _tmp_count = 0
@@ -975,22 +977,90 @@ class CompileVisitor(ast.NodeVisitor):
             raise ValueError('only pure names are supported')
         if not isinstance(node.target, ast.Name):
             raise ValueError('the left-hand side must be a simple identifier')
-        if (not isinstance(node.annotation, ast.Constant) or
-            not isinstance(node.annotation.value, int)):
-            raise ValueError('the annotation must be an integer constant')
+        if not isinstance(node.annotation, ast.Constant):
+            raise ValueError('the annotation must be a constant')
 
-        width = node.annotation.value
-        if width <= 0:
-            raise ValueError('the data width must be positive')
-        right = self.visit(node.value)
-        left_name = node.target.id
-        left = self.getVariable(left_name, width=width, store=True)
-        if (isinstance(left, fxd._FixedBase) or
-            isinstance(right, fxd._FixedBase)):
-            raise ValueError('fixed-point data types are not supported')
-        self.setBind(left, right)
-        self.setFsm()
-        self.incFsmCount()
+        if isinstance(node.annotation.value, int):
+            width = node.annotation.value
+            if width <= 0:
+                raise ValueError('the data width must be positive')
+            right = self.visit(node.value)
+            left_name = node.target.id
+            left = self.getVariable(left_name, width=width, store=True)
+            if (isinstance(left, fxd._FixedBase) or
+                isinstance(right, fxd._FixedBase)):
+                raise ValueError('fixed-point data types are not supported')
+            self.setBind(left, right)
+            self.setFsm()
+            self.incFsmCount()
+        elif isinstance(node.annotation.value, str):
+            if node.annotation.value != 'multicycle':
+                raise ValueError('the multicycle specification is only supported for string annotations')
+            right = self.visit_multicycle_arithmetic(node.value)
+            left_name = node.target.id
+            left = self.getVariable(left_name, store=True)
+            if isinstance(left, fxd._FixedBase):
+                raise ValueError('fixed-point data types are not supported in the multicycle mode')
+            self.setBind(left, right)
+            self.fsm.goto_next()
+        else:
+            raise ValueError('the annotation must be a constant of type int or str')
+
+    def visit_multicycle_arithmetic(self, node: ast.expr) -> vtypes.Reg | vtypes.Wire:
+        tmp_prefix = '_'.join([self.name, 'multicycle', 'tmp'])
+        mul_prefix = '_'.join([self.name, 'multicycle', 'mul'])
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, int):
+                tmp = self.m.Wire(_tmp_name(tmp_prefix), self.datawidth, signed=True)
+                tmp.assign(node.value)
+                return tmp
+            else:
+                raise ValueError(f'unsupported constant type in the multicycle mode: {type(node.value)}')
+        elif isinstance(node, ast.Name):
+            var = self.getVariable(node.id)
+            if isinstance(var, int):
+                tmp = self.m.Wire(_tmp_name(tmp_prefix), self.datawidth, signed=True)
+                tmp.assign(var)
+                return tmp
+            elif isinstance(var, (vtypes.Reg, vtypes.Wire)):
+                return var
+            else:
+                raise RuntimeError
+        elif isinstance(node, ast.UnaryOp):
+            right = self.visit_multicycle_arithmetic(node.operand)
+            if isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
+                op: type[vtypes._UnaryOperator] = getVeriloggenOp(node.op)
+                rslt = self.m.Wire(_tmp_name(tmp_prefix), self.datawidth, signed=True)
+                rslt.assign(op(right))
+                return rslt
+            else:
+                raise ValueError(f'unsupported operation type in the multicycle mode: {type(node.op)}')
+        elif isinstance(node, ast.BinOp):
+            left = self.visit_multicycle_arithmetic(node.left)
+            right = self.visit_multicycle_arithmetic(node.right)
+            if isinstance(node.op, (ast.Add, ast.Sub, ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd)):
+                op: type[vtypes._BinaryOperator] = getVeriloggenOp(node.op)
+                rslt = self.m.Reg(_tmp_name(tmp_prefix), self.datawidth, signed=True)
+                self.fsm(
+                    rslt(op(left, right))
+                )
+                self.fsm.goto_next()
+                return rslt
+            elif isinstance(node.op, ast.Mult):
+                en = self.m.Wire(_tmp_name(tmp_prefix), signed=False)
+                en.assign(self.fsm.here)
+                self.fsm.goto_next()
+                mul = Multiplier(self.m, _tmp_name(mul_prefix), self.clk, self.rst, left, right, en)
+                rslt = self.m.Reg(_tmp_name(tmp_prefix), self.datawidth, signed=True)
+                self.fsm.If(mul.valid)(
+                    rslt(mul.value)
+                )
+                self.fsm.If(mul.valid).goto_next()
+                return rslt
+            else:
+                raise ValueError(f'unsupported operation type in the multicycle mode: {type(node.op)}')
+        else:
+            raise ValueError(f'unsupported node type in the multicycle mode: {type(node)}')
 
     def visit_IfExp(self, node):
         test = self.visit(node.test)  # if condition

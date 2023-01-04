@@ -38,7 +38,7 @@ operators = {
 }
 
 
-def getVeriloggenOp(op):
+def getVeriloggenOp(op: ast.boolop | ast.operator | ast.unaryop | ast.cmpop) -> type[vtypes._Operator] | None:
     t = type(op)
     return operators[t]
 

@@ -1,0 +1,23 @@
+configs = '''
+log_parallelism = 3
+parallelism = 1 << log_parallelism
+packed_datawidth = datawidth * parallelism
+log_block_size_0 = 2
+log_block_size_1 = 4
+log_block_size_2 = 2
+block_size_0 = 1 << log_block_size_0
+block_size_1 = 1 << log_block_size_1
+block_size_2 = 1 << log_block_size_2'''
+
+strm_defs = '''
+strm = vthread.Stream(m, 'mac', clk, rst)
+size = strm.parameter('size', datawidth)
+initval = strm.parameter('initval', datawidth)
+a_packed = strm.source('a', packed_datawidth)
+b_packed = strm.source('b', packed_datawidth)
+a_list = strm.Split(a_packed, datawidth)
+b_list = strm.Split(b_packed, datawidth)
+prod_list = [a * b for a, b in zip(a_list, b_list)]
+sum = strm.AddTree(*prod_list)
+c, c_valid = strm.ReduceAddValid(sum, size, initval=initval)
+strm.sink(c, 'c', c_valid, 'c_valid')'''
