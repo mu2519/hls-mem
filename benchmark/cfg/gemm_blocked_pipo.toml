@@ -1,12 +1,13 @@
 rams = [
-  { type = 'RAM', name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 - log_parallelism' },
-  { type = 'RAM', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 + log_blocksize_2 - log_parallelism' },
-  { type = 'RAM', name = 'ram_c', datawidth = 'datawidth', addrwidth = 'log_blocksize_0 + log_blocksize_2' },
+  { type = 'PIPO', name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 - log_parallelism' },
+  { type = 'PIPO', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 + log_blocksize_2 - log_parallelism' },
+  { type = 'PIPO', name = 'ram_c', datawidth = 'datawidth', addrwidth = 'log_blocksize_0 + log_blocksize_2' },
 ]
 
 axis = [
-  [ 'axi_narrow', 'datawidth' ],
-  [ 'axi_wide', 'packed_datawidth' ],
+  [ 'axi_a', 'packed_datawidth' ],
+  [ 'axi_b', 'packed_datawidth' ],
+  [ 'axi_c', 'datawidth' ],
 ]
 
 comp_body = '''
@@ -15,12 +16,12 @@ for i in range(0, size_0, blocksize_0):
         for k in range(0, size_1, blocksize_1):
             b_addr: 'multicycle' = ((j*size_1 + k) << log_word) + b_offset
             for b_idx in range(0, blocksize_1 * blocksize_2 // parallelism, blocksize_1 // parallelism):
-                axi_wide.dma_read(ram_b, b_idx, b_addr, blocksize_1 // parallelism)
+                ram_b.dma_read(axi_b, b_idx, b_addr, blocksize_1 // parallelism)
                 b_addr += size_1 << log_word
 
             a_addr: 'multicycle' = ((i*size_1 + k) << log_word) + a_offset
             for ii in range(0, blocksize_0 * blocksize_2, blocksize_2):
-                axi_wide.dma_read(ram_a, 0, a_addr, blocksize_1 // parallelism)
+                ram_a.dma_read(axi_a, 0, a_addr, blocksize_1 // parallelism)
 
                 for jj in range(blocksize_2):
                     if k == 0:
@@ -39,5 +40,5 @@ for i in range(0, size_0, blocksize_0):
 
         c_addr: 'multicycle' = ((i*size_2 + j) << log_word) + c_offset
         for c_idx in range(0, blocksize_0 * blocksize_2, blocksize_2):
-            axi_narrow.dma_write(ram_c, c_idx, c_addr, blocksize_2)
+            ram_c.dma_write(axi_c, c_idx, c_addr, blocksize_2)
             c_addr += size_2 << log_word'''

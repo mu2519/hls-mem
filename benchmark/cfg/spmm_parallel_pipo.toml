@@ -6,7 +6,6 @@ rams = [
   { type = 'PIPO', name = 'ram_c', datawidth = 'packed_datawidth', addrwidth = 10, numports = 2 },
 ]
 
-# [ name, datawidth ]
 axis = [
   [ 'axi_a_row', 'datawidth' ],
   [ 'axi_a_col', 'datawidth' ],

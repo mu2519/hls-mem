@@ -1,0 +1,47 @@
+rams = [
+  { type = 'BuffetRead', name = 'ram_a', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 - log_parallelism' },
+  { type = 'BuffetRead', name = 'ram_b', datawidth = 'packed_datawidth', addrwidth = 'log_blocksize_1 + log_blocksize_2 - log_parallelism' },
+  { type = 'BuffetWrite', name = 'ram_c', datawidth = 'datawidth', addrwidth = 'log_blocksize_0 + log_blocksize_2' },
+]
+
+axis = [
+  [ 'axi_a', 'packed_datawidth' ],
+  [ 'axi_b', 'packed_datawidth' ],
+  [ 'axi_c', 'datawidth' ],
+]
+
+comp_body = '''
+for i in range(0, size_0, blocksize_0):
+    for j in range(0, size_2, blocksize_2):
+        for k in range(0, size_1, blocksize_1):
+            b_addr: 'multicycle' = ((j*size_1 + k) << log_word) + b_offset
+            for b_idx in range(0, blocksize_1 * blocksize_2 // parallelism, blocksize_1 // parallelism):
+                ram_b.dma_read(axi_b, b_addr, blocksize_1 // parallelism, blocksize_1 // parallelism // 2)
+                b_addr += size_1 << log_word
+            ram_b.rebase()
+
+            a_addr: 'multicycle' = ((i*size_1 + k) << log_word) + a_offset
+            for ii in range(0, blocksize_0 * blocksize_2, blocksize_2):
+                ram_a.dma_read(axi_a, a_addr, blocksize_1 // parallelism, blocksize_1 // parallelism // 2)
+                ram_a.rebase()
+
+                for jj in range(blocksize_2):
+                    if k == 0:
+                        initval = 0
+                    else:
+                        initval = ram_c.read(ii + jj)
+                    strm.set_parameter('size', blocksize_1 // parallelism)
+                    strm.set_parameter('initval', initval)
+                    strm.set_source_buffet('a', ram_a, 0, blocksize_1 // parallelism, release=(jj == blocksize_2 - 1))
+                    strm.set_source_buffet('b', ram_b, jj << (log_blocksize_1 - log_parallelism), blocksize_1 // parallelism, release=(ii == blocksize_0 * blocksize_2 - blocksize_2))
+                    strm.set_sink_buffet('c', ram_c, ii + jj, 1, release=(k == size_1 - blocksize_1))
+                    strm.run()
+                    strm.join()
+
+                a_addr += size_1 << log_word
+
+        ram_c.rebase()
+        c_addr: 'multicycle' = ((i*size_2 + j) << log_word) + c_offset
+        for c_idx in range(0, blocksize_0 * blocksize_2, blocksize_2):
+            ram_c.dma_write(axi_c, c_addr, blocksize_2, blocksize_2 // 2)
+            c_addr += size_2 << log_word'''

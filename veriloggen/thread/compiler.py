@@ -157,12 +157,12 @@ def find_dma_relevant(
 
 
 def find_var_modif(
-    node: ast.Assign | ast.AugAssign | ast.Expr,
+    node: ast.Assign | ast.AnnAssign | ast.AugAssign | ast.Expr,
     vars: set[str],
 ) -> bool:
     if isinstance(node, ast.Assign):
         return bool(get_vars(node.targets) & vars)
-    elif isinstance(node, ast.AugAssign):
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
         return bool(get_vars(node.target) & vars)
     elif isinstance(node, ast.Expr):
         return False
@@ -202,12 +202,14 @@ def make_dep_graph_sub(
     node: ast.AST,
     rslt: defaultdict[str, set[str | HashableASTCall]],
 ) -> None:
-    if isinstance(node, (ast.Assign, ast.AugAssign)):
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
             dst_vars = get_vars(node.targets)
         else:
             dst_vars = get_vars(node.target)
         src_vars = get_vars(node.value)
+        if isinstance(node, ast.AugAssign):
+            src_vars |= dst_vars
         src_calls = get_func_calls(node)
         for v in dst_vars:
             rslt[v] |= src_vars | src_calls
@@ -247,7 +249,7 @@ def collect_reachable(
 
 def filter_stmt(
     node: ast.stmt,
-    criteria: Sequence[Callable[[ast.Assign | ast.AugAssign | ast.Expr], bool]]
+    criteria: Sequence[Callable[[ast.Assign | ast.AnnAssign | ast.AugAssign | ast.Expr], bool]]
 ) -> ast.stmt | None:
     if isinstance(node, ast.For) and node.orelse:
         raise ValueError('for-else statement is not supported')
@@ -282,7 +284,7 @@ def filter_stmt(
         return node
     elif isinstance(node, ast.Pass):
         return None
-    elif isinstance(node, (ast.Assign, ast.AugAssign, ast.Expr)):
+    elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)):
         for criterion in criteria:
             if criterion(node):
                 return node

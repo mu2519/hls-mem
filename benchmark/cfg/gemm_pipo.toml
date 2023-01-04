@@ -4,7 +4,6 @@ rams = [
   { type = 'PIPO', name = 'ram_c', addrwidth = 10 },
 ]
 
-# [ name, datawidth ]
 axis = [
   [ 'axi_a', 'datawidth' ],
   [ 'axi_b', 'datawidth' ],

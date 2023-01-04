@@ -4,7 +4,6 @@ rams = [
   { type = 'RAM', name = 'ram_c', datawidth = 'datawidth', addrwidth = 10 },
 ]
 
-# [ name, datawidth ]
 axis = [
   [ 'axi_narrow', 'datawidth' ],
   [ 'axi_wide', 'packed_datawidth' ],
