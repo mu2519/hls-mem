@@ -2,6 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 
+subprocess.run(['python', 'clean.py'])
 subprocess.run(['python', 'generate.py'])
 
 os.chdir('./src')
