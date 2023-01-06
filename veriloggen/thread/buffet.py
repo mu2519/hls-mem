@@ -256,8 +256,10 @@ class BuffetRead(BuffetBase):
             self.limit.inc()
         )
 
-    def callback_for_dma_read(self, addr, stride, length, blocksize,
-                              wdata, wvalid, wlast=False, wquit=False, port=0, cond=None):
+    def callback_for_dma_read(
+        self, addr, stride, length, blocksize,
+        wdata, wvalid, wlast=False, wquit=False, port=0, cond=None
+    ):
         """
         Correspondance to AXI DMA:
             addr <-> local_addr (local address)
@@ -272,7 +274,7 @@ class BuffetRead(BuffetBase):
 
         fsm = TmpFSM(self.m, self.clk, self.rst,
                      prefix='callback_for_dma_read_fsm')
-        length_reg = self.m.TmpReg(vtypes.get_width(length),
+        length_reg = self.m.TmpReg(self.addrwidth + 1,
                                    prefix='callback_for_dma_read_length_reg')
 
         fsm(
@@ -339,9 +341,21 @@ class BuffetWrite(BuffetBase):
         self, addr, stride, length, blocksize,
         rready, rquit=False, port=0, cond=None
     ) -> tuple[vtypes.Wire, vtypes.Reg, vtypes.Reg]:
+        """
+        Correspondance to AXI DMA:
+            addr <-> local_addr
+            stride <-> local_stride
+            length <-> local_size
+            blocksize <-> local_blocksize
+            rdata <-> wdata (data signal in write data channel)
+            rlast <-> wlast (last signal in write data channel)
+        Unused parameters:
+            addr, stride, blocksize, rquit, port
+        """
+
         fsm = TmpFSM(self.m, self.clk, self.rst,
                      prefix='callback_for_dma_write_fsm')
-        length_reg = self.m.TmpReg(vtypes.get_width(length),
+        length_reg = self.m.TmpReg(self.addrwidth + 1,
                                    prefix='callback_for_dma_write_length_reg')
         rvalid = self.m.TmpReg(prefix='callback_for_dma_write_rvalid')
         rlast = self.m.TmpReg(prefix='callback_for_dma_write_rlast')
