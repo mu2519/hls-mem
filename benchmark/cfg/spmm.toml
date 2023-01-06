@@ -12,9 +12,6 @@ arrs = [
 ]
 
 configs = '''
-log_word = 2
-datawidth = (1 << log_word) * 8
-
 rand_range = (-16, 16)
 
 sparsity = 0.1

@@ -10,9 +10,13 @@ from veriloggen.types.ipxact import to_ipxact
 {{ imports }}
 
 
+log_word = 2
+datawidth = (1 << log_word) * 8
+
 # the capacity of memory (in bytes)
 memory_capacity = 2**20
 
+axi_max_datawidth = 128
 axi_addrwidth = 32
 
 axilite_datawidth = 32

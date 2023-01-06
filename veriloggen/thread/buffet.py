@@ -104,12 +104,10 @@ class BuffetBase:
         )
 
         # synchronize `occupancy`
-        self.inc_occ: vtypes.Wire
-        self.dec_occ: vtypes.Wire
+        self.dec_occ = make_flag(m, name + '_dec_occ')
 
         # synchronize `limit`
-        self.set_lim: vtypes.Wire
-        self.inc_lim: vtypes.Wire
+        self.set_lim = make_flag(m, name + '_set_lim')
 
     def read(self, fsm: FSM, index: vtypes.IntegralType) -> vtypes.Reg:
         data, valid = self.ram.read_rtl(self.base + index, port=0,
@@ -238,25 +236,9 @@ class BuffetRead(BuffetBase):
 
         # synchronization
 
-        # synchronize `tail`
-        self.inc_tail = m.Wire(name + '_inc_tail')
-        self.inc_tail_reg = m.Reg(name + '_inc_tail_reg', initval=0)
-        self.inc_tail.assign(self.inc_tail_reg)
-        self.seq(
-            self.inc_tail_reg(0)
-        )
-        self.seq.If(self.inc_tail)(
-            self.tail.inc()
-        )
-
         # synchronize `occupancy`
-        self.inc_occ = m.Wire(name + '_inc_occ')
-        self.inc_occ_reg = m.Reg(name + '_inc_occ_reg', initval=0)
-        self.inc_occ.assign(self.inc_occ_reg)
-        self.seq(
-            self.inc_occ_reg(0)
-        )
-        self.dec_occ = make_flag(m, name + '_dec_occ')
+        self.inc_occ = m.Reg(name + '_inc_occ', initval=0)
+        self.seq(self.inc_occ(0))  # set default
         self.seq.If(self.inc_occ, vtypes.Not(self.dec_occ))(
             self.occupancy.inc()
         ).Elif(vtypes.Not(self.inc_occ), self.dec_occ)(
@@ -264,13 +246,8 @@ class BuffetRead(BuffetBase):
         )
 
         # synchronize `limit`
-        self.set_lim = make_flag(m, name + '_set_lim')
-        self.inc_lim = m.Wire(name + '_inc_lim')
-        self.inc_lim_reg = m.Reg(name + '_inc_lim_reg', initval=0)
-        self.inc_lim.assign(self.inc_lim_reg)
-        self.seq(
-            self.inc_lim_reg(0)
-        )
+        self.inc_lim = m.Reg(name + '_inc_lim', initval=0)
+        self.seq(self.inc_lim(0))  # set default
         self.seq.If(self.set_lim, self.inc_lim)(
             self.limit(self.occupancy + 1)
         ).Elif(self.set_lim)(
@@ -279,35 +256,40 @@ class BuffetRead(BuffetBase):
             self.limit.inc()
         )
 
-    # unused parameters: addr, stride, blocksize, wlast, wquit, port
     def callback_for_dma_read(self, addr, stride, length, blocksize,
                               wdata, wvalid, wlast=False, wquit=False, port=0, cond=None):
+        """
+        Correspondance to AXI DMA:
+            addr <-> local_addr (local address)
+            stride <-> local_stride (local stride)
+            length <-> local_size (local size)
+            blocksize <-> local_blocksize (local blocksize)
+            wdata <-> rdata (data signal in read data channel)
+            wvalid <-> rvalid (valid signal in read data channel)
+        Unused parameters:
+            addr, stride, blocksize, wlast, wquit, port
+        """
+
         fsm = TmpFSM(self.m, self.clk, self.rst,
                      prefix='callback_for_dma_read_fsm')
-        addr_reg = self.m.TmpReg(self.addrwidth,
-                                 prefix='callback_for_dma_read_addr_reg')
         length_reg = self.m.TmpReg(vtypes.get_width(length),
                                    prefix='callback_for_dma_read_length_reg')
 
         fsm(
-            addr_reg(self.tail),
             length_reg(length)
         )
         fsm.If(cond, length > 0).goto_next()
 
-        self.ram.write_rtl(addr_reg, wdata, port=1, cond=(fsm.here, wvalid))
+        self.ram.write_rtl(self.tail, wdata, port=1, cond=(fsm.here, wvalid))
         self.seq.If(fsm.here, wvalid)(
-            self.inc_tail_reg(1),
-            self.inc_occ_reg(1),
-            self.inc_lim_reg(1)
+            self.tail.inc(),
+            self.inc_occ(1),
+            self.inc_lim(1)
         )
         fsm.If(wvalid)(
-            addr_reg.inc(),
             length_reg.dec()
         )
-        fsm.If(wvalid, length_reg <= 1).goto_next()
-
-        fsm.goto_init()
+        fsm.If(wvalid, length_reg <= 1).goto_init()
 
     def dma_read(self, fsm: FSM, axi: AXIM, addr, size, block_size):
         def axi_method(global_addr, local_size):
@@ -336,7 +318,6 @@ class BuffetWrite(BuffetBase):
 
         # synchronize `occupancy`
         self.inc_occ = make_flag(m, name + '_inc_occ')
-        self.dec_occ = make_flag(m, name + '_dec_occ')
         self.seq.If(self.inc_occ, vtypes.Not(self.dec_occ))(
             self.occupancy.inc()
         ).Elif(vtypes.Not(self.inc_occ), self.dec_occ)(
@@ -344,7 +325,6 @@ class BuffetWrite(BuffetBase):
         )
 
         # synchronize `limit`
-        self.set_lim = make_flag(m, name + '_set_lim')
         self.inc_lim = make_flag(m, name + '_inc_lim')
         self.seq.If(self.set_lim, self.inc_lim)(
             self.limit(self.occupancy + 1)

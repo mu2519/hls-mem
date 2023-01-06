@@ -8,7 +8,7 @@ subprocess.run(['python', 'generate.py'])
 os.chdir('./src')
 
 p = Path('.')
-for f in p.glob('*.py'):
+for f in sorted(p.glob('*.py'), key=lambda x: x.name):
     rslt = subprocess.run(['python', f.name], capture_output=True, text=True)
     ac = 'AC' in rslt.stdout
     wa = 'WA' in rslt.stdout

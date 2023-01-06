@@ -8,7 +8,7 @@ rams = [
 
 axis = [
   [ 'axi_narrow', 'datawidth' ],
-  [ 'axi_wide', 'packed_datawidth' ],
+  [ 'axi_wide', 'axi_wide_width' ],
 ]
 
 comp_body = '''

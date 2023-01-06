@@ -5,8 +5,8 @@ rams = [
 ]
 
 axis = [
-  [ 'axi_a', 'packed_datawidth' ],
-  [ 'axi_b', 'packed_datawidth' ],
+  [ 'axi_a', 'axi_wide_width' ],
+  [ 'axi_b', 'axi_wide_width' ],
   [ 'axi_c', 'datawidth' ],
 ]
 

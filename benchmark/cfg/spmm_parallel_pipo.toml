@@ -10,8 +10,8 @@ axis = [
   [ 'axi_a_row', 'datawidth' ],
   [ 'axi_a_col', 'datawidth' ],
   [ 'axi_a_val', 'datawidth' ],
-  [ 'axi_b', 'packed_datawidth' ],
-  [ 'axi_c', 'packed_datawidth' ],
+  [ 'axi_b', 'axi_wide_width' ],
+  [ 'axi_c', 'axi_wide_width' ],
 ]
 
 comp_body = '''

@@ -1,0 +1,5 @@
+configs = '''
+log_parallelism = 3
+parallelism = 1 << log_parallelism
+packed_datawidth = datawidth * parallelism
+axi_wide_width = min(packed_datawidth, axi_max_datawidth)'''
