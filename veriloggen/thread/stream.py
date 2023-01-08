@@ -57,16 +57,18 @@ def TmpStream(m, clk, rst,
 
 
 class Stream(BaseStream):
-    __intrinsics__ = ('set_source',
-                      'set_source_pattern', 'set_source_multidim',
+    __intrinsics__ = ('set_source', '_set_source',
+                      'set_source_pattern',
+                      'set_source_multidim',
                       'set_source_multipattern',
                       'set_source_generator',
                       'set_source_fifo',
                       'set_source_empty',
-                      'set_source_inchworm',
-                      'set_source_buffet',
+                      'set_source_inchworm', '_set_source_inchworm',
+                      'set_source_buffet', '_set_source_buffet',
                       'set_sink',
-                      'set_sink_pattern', 'set_sink_multidim',
+                      'set_sink_pattern',
+                      'set_sink_multidim',
                       'set_sink_multipattern',
                       'set_sink_generator',
                       'set_sink_fifo',
@@ -78,7 +80,7 @@ class Stream(BaseStream):
                       'set_source_consumer',
                       'set_sink_producer',
                       'set_sink_consumer',
-                      'set_parameter',
+                      'set_parameter', '_set_parameter',
                       'set_read_RAM', 'set_write_RAM', 'set_read_modify_write_RAM',
                       'set_read_fifo', 'set_write_fifo',
                       'read_sink',
@@ -1113,6 +1115,9 @@ class Stream(BaseStream):
 
     def set_source_buffet(self, *args, **kwargs):
         self.set_source_inchworm(*args, **kwargs)
+
+    def _set_source_buffet(self, *args, **kwargs):
+        self._set_source_inchworm(*args, **kwargs)
 
     def set_sink_producer(self, fsm: FSM, name: vtypes.StrLike,
                           ram: PIPO, offset, size, stride=1, port=0):
