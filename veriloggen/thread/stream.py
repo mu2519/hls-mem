@@ -2858,7 +2858,7 @@ class Stream(BaseStream):
         fsm_name = f'_{prefix}_source_fsm_{fsm_id}'
         var.source_fsm = FSM(self.module, fsm_name, self.clock, self.reset, as_module=self.fsm_as_module)
 
-        var.source_fsm.If(source_start, self.oready)(
+        self.seq.If(var.source_fsm.here, source_start, self.oready)(
             var.source_inchworm_next_addr(var.source_offset)
         )
         var.source_fsm.If(source_start, self.oready).goto_next()
