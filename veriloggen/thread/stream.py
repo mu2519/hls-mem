@@ -275,7 +275,7 @@ class Stream(BaseStream):
         var.source_multipat_size_bufs = None
         var.source_multipat_stride_bufs = None
 
-        # RAM, FIFO
+        # RAM, FIFO, Inchworm
         var.source_id_map: OrderedDict[int, int] = OrderedDict()
         var.source_sel = self.module.Reg('_%s_source_sel' % prefix,
                                          self.ram_sel_width, initval=0)
@@ -296,9 +296,10 @@ class Stream(BaseStream):
 
         # Inchworm
         var.source_inchworm_raddr = self.module.Reg(f'_{prefix}_source_inchworm_raddr', self.addrwidth, initval=0)
-        var.source_inchworm_renable = self.module.Reg(f'_{prefix}_source_inchworm_renable', 1, initval=0)
+        var.source_inchworm_next_addr = self.module.Reg(f'_{prefix}_source_inchworm_next_addr', self.addrwidth, initval=0)
+        var.source_inchworm_renable = self.module.Reg(f'_{prefix}_source_inchworm_renable', initval=0)
         var.source_inchworm_rdata = self.module.Wire(f'_{prefix}_source_inchworm_rdata', datawidth)
-        var.source_inchworm_release = self.module.Reg(f'_{prefix}_source_inchworm_release', 1, initval=0)
+        var.source_inchworm_release = self.module.Reg(f'_{prefix}_source_inchworm_release', initval=0)
 
         # empty
         var.has_source_empty = False
@@ -309,9 +310,7 @@ class Stream(BaseStream):
         self.seq.If(self.oready)(
             var.source_ram_renable(0),
             var.source_fifo_deq(0),
-            var.source_inchworm_renable(0)
-        )
-        self.seq(
+            var.source_inchworm_renable(0),
             var.source_inchworm_release(0)
         )
 
@@ -408,7 +407,7 @@ class Stream(BaseStream):
         data.sink_multipat_size_bufs = None
         data.sink_multipat_stride_bufs = None
 
-        # RAM, FIFO
+        # RAM, FIFO, Inchworm
         data.sink_id_map: OrderedDict[int, int] = OrderedDict()
         data.sink_sel = self.module.Reg('_%s_sink_sel' % prefix,
                                         self.ram_sel_width, initval=0)
@@ -430,10 +429,11 @@ class Stream(BaseStream):
         # Inchworm
         # `sink_inchworm_flag` is a flag used for stall control
         data.sink_inchworm_waddr = self.module.Reg(f'_{prefix}_sink_inchworm_waddr', self.addrwidth, initval=0)
-        data.sink_inchworm_wenable = self.module.Reg(f'_{prefix}_sink_inchworm_wenable', 1, initval=0)
+        data.sink_inchworm_next_addr = self.module.Reg(f'_{prefix}_sink_inchworm_next_addr', self.addrwidth, initval=0)
+        data.sink_inchworm_wenable = self.module.Reg(f'_{prefix}_sink_inchworm_wenable', initval=0)
         data.sink_inchworm_wdata = self.module.Reg(f'_{prefix}_sink_inchworm_wdata', data.width, initval=0)
-        data.sink_inchworm_release = self.module.Reg(f'_{prefix}_sink_inchworm_release', 1, initval=0)
-        data.sink_inchworm_flag = self.module.Reg(f'_{prefix}_sink_inchworm_flag', 1, initval=0)
+        data.sink_inchworm_release = self.module.Reg(f'_{prefix}_sink_inchworm_release', initval=0)
+        data.sink_inchworm_flag = self.module.Reg(f'_{prefix}_sink_inchworm_flag', initval=0)
 
         # immediate
         data.sink_immediate = self.module.Reg('_%s_sink_immediate' % prefix,
@@ -443,9 +443,7 @@ class Stream(BaseStream):
         self.seq.If(self.oready)(
             data.sink_ram_wenable(0),
             data.sink_fifo_enq(0),
-            data.sink_inchworm_wenable(0)
-        )
-        self.seq(
+            data.sink_inchworm_wenable(0),
             data.sink_inchworm_release(0)
         )
 
@@ -2825,17 +2823,17 @@ class Stream(BaseStream):
         inchworm_cond = (var.source_sel == inchworm_id)
         renable = vtypes.Ands(self.oready, var.source_inchworm_renable, inchworm_cond)
 
-        rdata, _ = inchworm.ram.read_rtl(inchworm.base + var.source_inchworm_raddr, 0, renable)
+        rdata, _ = inchworm.ram.read_rtl(inchworm.base + var.source_inchworm_raddr[:inchworm.addrwidth], 0, renable)
 
         util.add_mux(var.source_inchworm_rdata, inchworm_cond, rdata)
 
         # stall control
         cond = vtypes.Land(self.source_busy, inchworm_cond)
-        inchworm_oready = vtypes.Lor(vtypes.Cond(var.source_inchworm_renable, vtypes.Lor(var.source_count == 1, var.source_inchworm_raddr + 1 < inchworm.limit), inchworm.limit > 0), var.source_idle)
+        inchworm_oready = vtypes.Lor(var.source_inchworm_next_addr[:inchworm.addrwidth + 1] < inchworm.limit, var.source_idle)
         util.add_disable_cond(self.oready, cond, inchworm_oready)
 
         # release control
-        inchworm.release_rtl(release, inchworm_cond, var.source_inchworm_release)
+        inchworm.release_rtl(self.oready, var.source_inchworm_release, inchworm_cond, release)
 
     def _synthesize_set_source_inchworm(self, var: stypes._Variable, name: str):
         if var.source_fsm is not None:
@@ -2860,18 +2858,25 @@ class Stream(BaseStream):
         fsm_name = f'_{prefix}_source_fsm_{fsm_id}'
         var.source_fsm = FSM(self.module, fsm_name, self.clock, self.reset, as_module=self.fsm_as_module)
 
+        var.source_fsm.If(source_start, self.oready)(
+            var.source_inchworm_next_addr(var.source_offset)
+        )
         var.source_fsm.If(source_start, self.oready).goto_next()
 
         self.seq.If(var.source_fsm.here, self.oready)(
             var.source_inchworm_raddr(var.source_offset_buf),
+            var.source_inchworm_next_addr(var.source_offset_buf + 1),
             var.source_inchworm_renable(1),
             var.source_count(var.source_size_buf)
         )
-
+        self.seq.If(var.source_fsm.here, var.source_size_buf <= 1, self.oready)(
+            var.source_inchworm_next_addr(0)
+        )
         var.source_fsm.If(self.oready).goto_next()
 
         self.seq.If(var.source_fsm.here, self.oready)(
             var.source_inchworm_raddr.inc(),
+            var.source_inchworm_next_addr.inc(),
             var.source_inchworm_renable(1),
             var.source_count.dec(),
             var.source_inchworm_release(1)
@@ -2879,6 +2884,9 @@ class Stream(BaseStream):
         self.seq.If(var.source_fsm.here, var.source_count == 1, self.oready)(
             var.source_inchworm_renable(0),
             var.source_idle(1)
+        )
+        self.seq.If(var.source_fsm.here, var.source_count <= 2, self.oready)(
+            var.source_inchworm_next_addr(0)
         )
         var.source_fsm.If(var.source_count == 1, self.oready).goto_init()
 
@@ -3620,14 +3628,14 @@ class Stream(BaseStream):
         # write data
         inchworm_cond = (var.sink_sel == inchworm_id)
         wenable = vtypes.Ands(self.oready, var.sink_inchworm_wenable, inchworm_cond)
-        inchworm.ram.write_rtl(inchworm.base + var.sink_inchworm_waddr, var.sink_inchworm_wdata, 0, vtypes.Land(var.sink_inchworm_waddr < inchworm.limit, wenable))
+        inchworm.ram.write_rtl(inchworm.base + var.sink_inchworm_waddr[:inchworm.addrwidth], var.sink_inchworm_wdata, 0, wenable)
 
         # stall control
         cond = vtypes.Ands(self.sink_busy, inchworm_cond, var.sink_inchworm_flag)
-        util.add_disable_cond(self.oready, cond, var.sink_inchworm_waddr + 1 < inchworm.limit)
+        util.add_disable_cond(self.oready, cond, var.sink_inchworm_next_addr[:inchworm.addrwidth + 1] < inchworm.limit)
 
         # release control
-        inchworm.release_rtl(release, inchworm_cond, var.sink_inchworm_release)
+        inchworm.release_rtl(self.oready, var.sink_inchworm_release, inchworm_cond, release)
 
     def _synthesize_set_sink_inchworm(self, var: stypes._Numeric, name: str):
         if var.sink_fsm is not None:
@@ -3652,6 +3660,7 @@ class Stream(BaseStream):
 
         self.seq.If(var.sink_fsm.here, self.oready)(
             var.sink_inchworm_waddr(var.sink_offset_buf - 1),
+            var.sink_inchworm_next_addr(var.sink_offset_buf),
             var.sink_count(var.sink_size_buf),
             var.sink_inchworm_flag(1)
         )
@@ -3667,6 +3676,7 @@ class Stream(BaseStream):
 
         self.seq.If(var.sink_fsm.here, wcond, self.oready)(
             var.sink_inchworm_waddr.inc(),
+            var.sink_inchworm_next_addr.inc(),
             var.sink_inchworm_wenable(1),
             var.sink_inchworm_wdata(rdata),
             var.sink_count.dec(),
