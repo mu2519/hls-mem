@@ -49,6 +49,8 @@ class RAM(_MutexFunction):
         self.datawidth = datawidth
         self.addrwidth = addrwidth
 
+        # the following two variables are not used in RAM
+        # and used in MultibankRAM
         self.packed_datawidth = datawidth
         self.packed_addrwidth = addrwidth
 

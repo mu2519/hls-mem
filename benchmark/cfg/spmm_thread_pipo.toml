@@ -13,11 +13,11 @@ for i in range(1, a_height + 1):
     if row_range > 0:
         ram_a_col.dma_read(axi_a_col, 0, a_col_addr, row_range)
         ram_a_val.dma_read(axi_a_val, 0, a_val_addr, row_range)
-        a_col_addr += row_range * (datawidth // 8)
-        a_val_addr += row_range * (datawidth // 8)
+        a_col_addr += row_range << log_word
+        a_val_addr += row_range << log_word
         for j in range(row_range):
             idx = ram_a_col.read(j)
-            b_addr = b_offset + idx * b_width * (datawidth // 8)
+            b_addr: 'multicycle' = b_offset + ((idx * b_width) << log_word)
             ram_b.dma_read(axi_b, 0, b_addr, b_width)
             x = ram_a_val.read(j)
             for k in range(b_width):
@@ -26,4 +26,4 @@ for i in range(1, a_height + 1):
                 w = z + x*y
                 ram_c.write(k, w)
     ram_c.dma_write(axi_c, 0, c_addr, b_width)
-    c_addr += b_width * (datawidth // 8)'''
+    c_addr += b_width << log_word'''
