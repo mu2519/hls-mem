@@ -83,7 +83,7 @@ class BuffetBase:
         # fundamental registers
         initval = defaultdict(int, initval)
         self.base = m.Reg(name + '_base', addrwidth, initval=initval['base'])
-        self.limit = m.Reg(name + '_limit', addrwidth + 1, initval=initval['limit'])
+        self.limit = m.Reg(name + '_limit', addrwidth + 2, initval=initval['limit'])
         self.head = m.Reg(name + '_head', addrwidth, initval=initval['head'])
         self.tail = m.Reg(name + '_tail', addrwidth, initval=initval['tail'])
         self.occupancy = m.Reg(name + '_occupancy', addrwidth + 1, initval=initval['occupancy'])
