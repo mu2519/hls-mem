@@ -201,8 +201,35 @@ def get_func_calls(node: ast.AST) -> set[HashableASTCall]:
 def make_dep_graph_sub(
     node: ast.AST,
     rslt: defaultdict[str, set[str | HashableASTCall]],
+    ctrl_dep: set[str] = set(),
 ) -> None:
-    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+    # `a |= b` is different from `a = a | b`
+    # the former modifies a set in place, while the latter creates a new set
+    # this difference can cause bugs!
+    if isinstance(node, ast.For):
+        if node.orelse:
+            raise ValueError('for-else statement is not supported')
+        if not isinstance(node.target, ast.Name):
+            raise ValueError('unpacking in for statement is not supported')
+        if not isinstance(node.iter, ast.Call) or not isinstance(node.iter.func, ast.Name) or not node.iter.func.id == 'range':
+            raise ValueError('range function is only supported for for statement')
+        ctrl_dep = ctrl_dep | get_vars(node.iter.args)
+        rslt[node.target.id] |= ctrl_dep
+        for n in node.body:
+            make_dep_graph_sub(n, rslt, ctrl_dep)
+    elif isinstance(node, ast.While):
+        if node.orelse:
+            raise ValueError('while-else statement is not supported')
+        ctrl_dep = ctrl_dep | get_vars(node.test)
+        for n in node.body:
+            make_dep_graph_sub(n, rslt, ctrl_dep)
+    elif isinstance(node, ast.If):
+        ctrl_dep = ctrl_dep | get_vars(node.test)
+        for n in node.body:
+            make_dep_graph_sub(n, rslt, ctrl_dep)
+        for n in node.orelse:
+            make_dep_graph_sub(n, rslt, ctrl_dep)
+    elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
         if isinstance(node, ast.Assign):
             dst_vars = get_vars(node.targets)
         else:
@@ -212,10 +239,10 @@ def make_dep_graph_sub(
             src_vars |= dst_vars
         src_calls = get_func_calls(node)
         for v in dst_vars:
-            rslt[v] |= src_vars | src_calls
+            rslt[v] |= src_vars | src_calls | ctrl_dep
     else:
         for n in ast.iter_child_nodes(node):
-            make_dep_graph_sub(n, rslt)
+            make_dep_graph_sub(n, rslt, ctrl_dep)
 
 
 def make_dep_graph(node: ast.AST) -> dict[str, set[str | HashableASTCall]]:
@@ -325,8 +352,9 @@ def extract_dma_relevant(
                     if isinstance(scope[inst_name], PIPO):
                         if method_name in ['read_producer', 'read_consumer']:
                             called_methods = get_called_methods(node, inst_name)
+                            # WARNING: currently workaround
                             if called_methods.isdisjoint(
-                                {'write_producer', 'write_consumer', 'dma_read'}
+                                {'write_producer', 'write_consumer', 'dma_read', 'wait_not_empty'}
                             ):
                                 continue
                     elif isinstance(scope[inst_name], (RAM, Inchworm, BuffetBase)):
