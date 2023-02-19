@@ -26,7 +26,7 @@ from . import madd
 _object_counter = 0
 
 
-def Constant(value, fixed=True, point=0):
+def Constant(value: int | float | str, fixed=True, point=0) -> Int | FixedPoint | Float | Str:
     if isinstance(value, int):
         return Int(value)
 
@@ -213,7 +213,7 @@ class _Numeric(_Node):
     def _set_seq(self, seq):
         self.seq = seq
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         raise NotImplementedError('_implement() is not implemented.')
 
     def _implement_input(self, m, seq, aswire=False):
@@ -463,7 +463,7 @@ class _Operator(_Numeric):
     latency = 1
     iteration_interval = 1
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         raise NotImplementedError('_implement() is not implemented.')
 
 
@@ -494,7 +494,7 @@ class _BinaryOperator(_Operator):
         self._set_module(getattr(self.strm, 'module', None))
         self._set_seq(getattr(self.strm, 'seq', None))
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         width = self.get_width()
         signed = self.get_signed()
 
@@ -574,7 +574,7 @@ class _UnaryOperator(_Operator):
         self._set_module(getattr(self.strm, 'module', None))
         self._set_seq(getattr(self.strm, 'seq', None))
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         width = self.get_width()
         signed = self.get_signed()
         rdata = self.right.sig_data
@@ -652,7 +652,7 @@ class Times(_BinaryOperator):
         self.point = min(max(left_fp, right_fp), left_fp + right_fp)
         self.signed = self.left.get_signed() and self.right.get_signed()
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         if self.latency < 3:
             raise ValueError("Latency of '*' operator must be greater than 2")
 
@@ -715,7 +715,7 @@ class Divide(_BinaryOperator):
             return int(left / right)
         return Divide(left, right)
 
-    def _implement(self, m, seq, svalid=None, senable=None):
+    def _implement(self, m: Module, seq: Seq, svalid=None, senable=None):
         if self.latency <= 5:
             raise ValueError("Latency of div operator must be greater than 5")
 
@@ -5072,7 +5072,7 @@ def is_stream_object(*objs):
     return False
 
 
-def _to_constant(obj):
+def _to_constant(obj: int | float | str | vtypes._Numeric | _Numeric):
     if isinstance(obj, (int, float, bool, str)):
         return Constant(obj)
     if isinstance(obj, vtypes._Numeric):
@@ -5127,7 +5127,7 @@ def _and_vars(*vars):
     return ret
 
 
-def _from_vtypes_value(value):
+def _from_vtypes_value(value: vtypes._Numeric) -> Int | Float | Str | _ParameterVariable:
     if isinstance(value, vtypes.Int):
         if not isinstance(value.value, int):
             raise TypeError("Unsupported type for Constant '%s'" %
